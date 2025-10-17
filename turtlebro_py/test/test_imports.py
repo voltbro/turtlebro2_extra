@@ -12,6 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-from .turtlebro_py import TurtleBro, TurtleNav, Utility
+import importlib
 
-__all__ = ['TurtleBro', 'TurtleNav', 'Utility']
+MODULES = [
+    'turtlebro_py',
+    'turtlebro_py.turtlebro_py',
+]
+
+
+def test_modules_can_be_imported():
+    for module in MODULES:
+        importlib.import_module(module)

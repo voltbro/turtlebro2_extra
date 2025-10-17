@@ -1,3 +1,17 @@
+# Copyright 2024 VoltBro
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
 import math
 import subprocess
 import threading
@@ -5,18 +19,17 @@ import time
 from typing import Any, Callable, Dict, Optional, Tuple
 
 import cv2
+from geometry_msgs.msg import Twist
+from nav2_msgs.action import NavigateToPose
+from nav_msgs.msg import Odometry
 import numpy as np
 import rclpy
-from geometry_msgs.msg import Twist
-from nav_msgs.msg import Odometry
-from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionClient
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.task import Future
 from sensor_msgs.msg import CompressedImage, LaserScan
 from std_msgs.msg import Float32MultiArray, Int16
-from std_srvs.srv import Empty
 from tf_transformations import (
     euler_from_quaternion,
     quaternion_from_euler,
@@ -24,7 +37,10 @@ from tf_transformations import (
     quaternion_multiply,
 )
 
-from turtlebro_speech.srv import Speech
+try:
+    from turtlebro_speech.srv import Speech
+except ImportError:  # pragma: no cover - optional dependency on robot image
+    Speech = None  # type: ignore[assignment]
 
 DEBUG = 1  # Включение/отключение отладочной печати
 
@@ -55,6 +71,7 @@ def _wait_for_message(node: Node, topic: str, msg_type: Any, timeout: Optional[f
 class TurtleBro:
     """
     Класс для базового робота TurtleBro с управлением движением, светодиодами, камерой и звуком.
+
     Интерфейс совместим с версией под ROS 1.
     """
 
@@ -285,7 +302,13 @@ class TurtleBro:
             time.sleep(0.05)
 
     # Вычисление скорости по трапецеидальной траектории для движения
-    def __move_trapezoidal_trajectory(self, max_speed, distance_passed, total_distance, min_speed=0.05):
+    def __move_trapezoidal_trajectory(
+        self,
+        max_speed,
+        distance_passed,
+        total_distance,
+        min_speed=0.05,
+    ):
         move_deccel = max(total_distance * 0.5, 0.10)
         distance_remaining = total_distance - distance_passed
         if distance_remaining < move_deccel:
@@ -295,7 +318,13 @@ class TurtleBro:
         return speed
 
     # Вычисление скорости по трапецеидальной траектории для поворота
-    def __turn_trapezoidal_trajectory(self, max_speed, delta, total_angle, min_speed=0.075):
+    def __turn_trapezoidal_trajectory(
+        self,
+        max_speed,
+        delta,
+        total_angle,
+        min_speed=0.075,
+    ):
         turn_deccel = max(total_angle * 0.7, 0.2)
         if abs(delta) < turn_deccel:
             speed = max(min_speed, max_speed * (abs(delta) / turn_deccel))
@@ -367,9 +396,7 @@ class TurtleBro:
 
 
 class TurtleNav(TurtleBro):
-    """
-    Робот с поддержкой навигации через Nav2 (navigate_to_pose).
-    """
+    """Робот с поддержкой навигации через Nav2 (navigate_to_pose)."""
 
     def __init__(self):
         super().__init__()
@@ -422,7 +449,9 @@ class Utility:
             self._node.create_subscription(Int16, '/buttons', self.__subscriber_buttons_cb, 10)
         )
         self.colorpub = self._node.create_publisher(Int16, '/py_leds', 10)
-        self.speech_client = self._node.create_client(Speech, 'festival_speech')
+        self.speech_client = None
+        if Speech is not None:
+            self.speech_client = self._node.create_client(Speech, 'festival_speech')
 
         time_counter = 0.0
         time_to_wait = 3.0
@@ -473,7 +502,9 @@ class Utility:
 
     # Управление светодиодами
     def color(self, col):
-        assert isinstance(col, str), 'Имя цвета должно быть: red, green, blue, yellow, white или off'
+        assert isinstance(
+            col, str
+        ), 'Имя цвета должно быть: red, green, blue, yellow, white или off'
         rgb = {'red': 1, 'green': 2, 'blue': 3, 'yellow': 4, 'white': 5, 'off': 6}
         shade = Int16()
         shade.data = int(rgb[col])
@@ -481,7 +512,9 @@ class Utility:
 
     # Получение расстояния по лазеру
     def distance(self, angle):
-        assert isinstance(angle, (int, float)), 'Угол должен быть числом от 0 до 359'
+        assert isinstance(angle, (int, float)), (
+            'Угол должен быть числом от 0 до 359'
+        )
         if not self.scan.ranges:
             return 0
         if angle == 0:
@@ -507,7 +540,10 @@ class Utility:
         assert isinstance(name, str), 'Имя файла фото должно быть строкой'
         try:
             image_msg = _wait_for_message(
-                self._node, '/front_camera/image_raw/compressed', CompressedImage, timeout=3.0
+                self._node,
+                '/front_camera/image_raw/compressed',
+                CompressedImage,
+                timeout=3.0,
             )
             np_arr = np.frombuffer(image_msg.data, np.uint8)
             image_from_ros_camera = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
@@ -523,10 +559,19 @@ class Utility:
 
     # Запись звука
     def record(self, timeval, filename, file_format='.wav'):
-        assert timeval > 0 and isinstance(timeval, (float, int)), 'Временной интервал должен быть > 0'
-        process = subprocess.Popen(
-            ['arecord', '-D', 'hw:1,0', '-f', 'S16_LE', '-r 48000', f'/home/pi/{filename}{file_format}']
+        assert timeval > 0 and isinstance(timeval, (float, int)), (
+            'Временной интервал должен быть > 0'
         )
+        process = subprocess.Popen([
+            'arecord',
+            '-D',
+            'hw:1,0',
+            '-f',
+            'S16_LE',
+            '-r',
+            '48000',
+            f'/home/pi/{filename}{file_format}',
+        ])
         time.sleep(timeval)
         process.kill()
 
@@ -534,6 +579,8 @@ class Utility:
     def say(self, text):
         if not isinstance(text, str):
             text = str(text)
+        if Speech is None or self.speech_client is None:
+            raise RuntimeError('Speech service unavailable: turtlebro_speech not installed')
         while not self.speech_client.wait_for_service(timeout_sec=1.0):
             if not rclpy.ok():
                 raise RuntimeError('Speech service unavailable')

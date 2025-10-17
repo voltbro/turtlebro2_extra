@@ -1,4 +1,17 @@
-#! /usr/bin/env python3
+# Copyright 2024 VoltBro
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
 from typing import Optional
 
 import rclpy
@@ -19,7 +32,9 @@ class PhotoService(Node):
 
     def handle_photo(self, request: Photo.Request, response: Photo.Response) -> Photo.Response:
         try:
-            response.photo = self._wait_for_photo('/front_camera/image_raw/compressed', timeout=5.0)
+            response.photo = self._wait_for_photo(
+                '/front_camera/image_raw/compressed', timeout=5.0
+            )
         except TimeoutError as exc:
             self.get_logger().error(str(exc))
         return response

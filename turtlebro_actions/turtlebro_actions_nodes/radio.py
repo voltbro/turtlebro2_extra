@@ -1,12 +1,25 @@
+# Copyright 2024 VoltBro
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
 
-#! /usr/bin/env python3
 import struct
 import time
 from typing import Optional
 
 import rclpy
-import serial
 from rclpy.node import Node
+import serial
 
 from .commands_controller import CommandsController
 
@@ -22,7 +35,10 @@ class RadioCommandNode(Node):
         super().__init__('radio_command_node')
         self.declare_parameter(
             'port',
-            '/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0',
+            (
+                '/dev/serial/by-id/'
+                'usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0'
+            ),
         )
         self.declare_parameter('baud', 19200)
         self.declare_parameter('linear_speed', 0.22)
@@ -62,7 +78,7 @@ class RadioCommandNode(Node):
                 for idx in range(commands_count):
                     try:
                         command, value = struct.unpack(
-                            STRUCT_FORMAT, payload[idx * struct_len : (idx + 1) * struct_len]
+                            STRUCT_FORMAT, payload[idx * struct_len:(idx + 1) * struct_len]
                         )
                         self._process_command(idx, command, value)
                     except struct.error as exc:
@@ -80,7 +96,7 @@ class RadioCommandNode(Node):
             data: bytes = result if isinstance(result, bytes) else result.encode()
             packs = int(len(data) / PACK_SIZE) + 1
             for pack_idx in range(packs):
-                serial_pack = data[pack_idx * PACK_SIZE : (pack_idx + 1) * PACK_SIZE]
+                serial_pack = data[pack_idx * PACK_SIZE:(pack_idx + 1) * PACK_SIZE]
                 sent = self.serial.write(serial_pack)
                 self.get_logger().info('Send data pack %d: %s bytes', pack_idx, sent)
                 time.sleep(0.5)
