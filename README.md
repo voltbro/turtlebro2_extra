@@ -1,44 +1,46 @@
 <img src="https://user-images.githubusercontent.com/57194638/201707251-5aa29404-2494-4e16-be4a-0cd821a1c0d9.png" width="800" height="300">
 
-#  Метапакет turtlebro_extra для робота Turtlebro
+# Метапакет turtlebro_extra для робота TurtleBro (ROS 2 Jazzy)
 
-
-## Установка пакета
+## Установка и сборка
 
 ```
-cd ~/catkin_ws/src
+mkdir -p ~/turtlebro_ws/src
+cd ~/turtlebro_ws/src
 git clone https://github.com/voltbro/turtlebro_extra
 cd ..
-catkin_make --pkg=turtlebro_extra
+colcon build --packages-select turtlebro_actions turtlebro_py
+source install/setup.bash
 ```
 
-## Доступные пакеты для роботов компании "Братья Вольт" в пакете  turtlebro_extra
-
-Список доступных для использования пакетов с небольшим описанием:
+## Доступные пакеты
 
 ### turtlebro_actions
 
-https://github.com/voltbro/turtlebro_extra/tree/master/turtlebro_actions
-
-Представляет собой набор стандартных действий робота (проезд вперед, поворот и т.д.), оформленных в сервисы.
+- `ros2 launch turtlebro_actions action_servers.launch.py` — поднимает action-серверы движения и поворота.
+- `ros2 launch turtlebro_actions radio.launch.py` — стартует радиомост вместе с action-серверами и позволяет передать параметры порта/скоростей.
 
 ### turtlebro_py
 
-https://github.com/voltbro/turtlebro_extra/tree/master/turtlebro_py
+Python-библиотека с классами `TurtleBro` и `TurtleNav`, обеспечивающими команды движения, работу с сенсорами, камерой и озвучкой.
 
-Питон-пакет для управления TurtleBro напрямую из Python без погружения в ROS. Предоставляет класс `TurtleBro` с командами движения, работы с сенсорами и периферией.
+```python
+from turtlebro_py import TurtleBro
 
-## Работа пакета *turtlebro_extra* на компьютере
+tb = TurtleBro()
+tb.forward(0.2)
+tb.right(90)
+tb.save_photo("demo")
+tb.shutdown()
+```
 
-В случае, если необходимо запустить работу одного из пакетов, входящих в метапакет **turtlebro_extra**, на компьютере, то для начала необходимо сконфигурировать собственное рабочее пространство:
+## Настройка среды
+
+Добавьте workspace в `~/.bashrc`, чтобы ROS 2 окружение поднималось автоматически:
 
 ```
-cd
-mkdir -p ~/catkin_ws/src
-cd ~/catkin_ws/
-catkin_make
+echo "source ~/turtlebro_ws/install/setup.bash" >> ~/.bashrc
+source ~/.bashrc
 ```
-Далее добавить ссылку на рабочее пространство в файл *bashrc*:
-```
-echo "source /home/$USER/catkin_ws/devel/setup.bash" >> ~/.bashrc source ~/.bashrc
-```
+
+После этого пакеты доступны через `ros2 run` и Python API. Дополнительные детали смотрите в README соответствующих пакетов.

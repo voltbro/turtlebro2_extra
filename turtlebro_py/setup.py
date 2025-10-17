@@ -1,11 +1,24 @@
-## ! DO NOT MANUALLY INVOKE THIS setup.py, USE CATKIN INSTEAD
-
 from setuptools import setup
-from catkin_pkg.python_setup import generate_distutils_setup
 
-# fetch values from package.xml
-setup_args = generate_distutils_setup(
-    packages=['turtlebro_py'],
-    package_dir={'': 'src'})
+package_name = 'turtlebro_py'
 
-setup(**setup_args)
+setup(
+    name=package_name,
+    version='0.1.0',
+    packages=[package_name],
+    data_files=[
+        ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
+        ('share/' + package_name, ['package.xml']),
+    ],
+    install_requires=['setuptools'],
+    zip_safe=True,
+    maintainer='Ubercola',
+    maintainer_email='cola@cactus.ru',
+    description='Python control API for TurtleBro on ROS 2 Jazzy.',
+    license='TODO',
+    tests_require=['pytest'],
+    entry_points={
+        'console_scripts': [
+        ],
+    },
+)

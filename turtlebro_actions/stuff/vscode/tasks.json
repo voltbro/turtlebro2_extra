@@ -4,7 +4,7 @@
 		{
 			"label": "build_ros",
 			"type": "shell",
-			"command": "cd /home/pi/ros_catkin_ws && sudo ./src/catkin/bin/catkin_make_isolated --install -DCMAKE_BUILD_TYPE=Release --install-space /opt/ros/melodic --pkg=turtlebro_actions",
+			"command": "cd ~/turtlebro_ws && colcon build --packages-select turtlebro_actions",
 			"group": {
 				"kind": "build",
 				"isDefault": true

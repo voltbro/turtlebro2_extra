@@ -2,21 +2,23 @@
 Пакет входит в сборку метапакета turtlebro_extra и устанавливается автоматически при установке этого пакета. В случае, если вы хотите установить пакет turtlebro_actions отдельно, на роботе выполните команды:
 
 ```
-cd ~/catkin_ws/src
+mkdir -p ~/turtlebro_ws/src
+cd ~/turtlebro_ws/src
 git clone https://github.com/voltbro/turtlebro_extra
-cd ../
-catkin_make --pkg turtlebro_actions
+cd ..
+colcon build --packages-select turtlebro_actions
+source install/setup.bash
 ```
 # turtlebro_actions
 
 ```
-roslaunch turtlebro_actions actions_servers.launch
+ros2 launch turtlebro_actions action_servers.launch.py
 ```
 
 # Командный режим управления #
 
 ```
-roslaunch turtlebro_actions radio.launch
+ros2 launch turtlebro_actions radio.launch.py
 ```
 
 ## Список команд ##
