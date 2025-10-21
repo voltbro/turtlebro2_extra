@@ -54,7 +54,7 @@ ros2 launch turtlebro_actions radio.launch.py
 
 
 
-## Radio commands ##
+## Радиокоманды ##
 
 Скорость подключения 19200
 

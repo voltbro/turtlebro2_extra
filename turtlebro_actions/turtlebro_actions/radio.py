@@ -29,7 +29,7 @@ PACK_SIZE = 1024
 
 
 class RadioCommandNode(Node):
-    """Bridges serial packets into action/service calls."""
+    """Преобразует последовательные пакеты в вызовы action- и service-интерфейсов."""
 
     def __init__(self) -> None:
         super().__init__('radio_command_node')
@@ -60,7 +60,7 @@ class RadioCommandNode(Node):
             angular_speed=float(angular_speed),
         )
         self.get_logger().info(
-            'Radio command node ready on %s @ %s baud', self.serial.port, self.serial.baudrate
+            f'Узел радиокоманд готов на {self.serial.port} @ {self.serial.baudrate} бод'
         )
 
     def spin_forever(self) -> None:
@@ -82,14 +82,16 @@ class RadioCommandNode(Node):
                         )
                         self._process_command(idx, command, value)
                     except struct.error as exc:
-                        self.get_logger().warn('Malformed packet: %s', exc)
+                        self.get_logger().warn(f'Некорректный пакет: {exc}')
         except serial.SerialException as exc:
-            self.get_logger().error('Serial failure: %s', exc)
+            self.get_logger().error(f'Ошибка последовательного порта: {exc}')
         finally:
             self.serial.close()
 
     def _process_command(self, idx: int, command: int, value: int) -> None:
-        self.get_logger().debug('Packet %d command %d value %d', idx, command, value)
+        self.get_logger().debug(
+            f'Пакет {idx}: команда {command}, значение {value}'
+        )
         result = self.controller.execute(command, value)
 
         if command in (55, 56) and result is not None:
@@ -98,7 +100,9 @@ class RadioCommandNode(Node):
             for pack_idx in range(packs):
                 serial_pack = data[pack_idx * PACK_SIZE:(pack_idx + 1) * PACK_SIZE]
                 sent = self.serial.write(serial_pack)
-                self.get_logger().info('Send data pack %d: %s bytes', pack_idx, sent)
+                self.get_logger().info(
+                    f'Отправлен пакет данных {pack_idx}: {sent} байт'
+                )
                 time.sleep(0.5)
 
 
@@ -108,7 +112,7 @@ def main(args: Optional[list[str]] = None) -> None:
     try:
         node.spin_forever()
     except KeyboardInterrupt:
-        node.get_logger().info('Radio command node interrupted by user')
+        node.get_logger().info('Узел радиокоманд остановлен пользователем')
     finally:
         node.destroy_node()
         rclpy.shutdown()

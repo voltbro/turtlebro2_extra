@@ -19,16 +19,16 @@ from rclpy.node import Node
 from rclpy.task import Future
 from sensor_msgs.msg import CompressedImage
 
-from turtlebro_actions.srv import Photo
+from turtlebro_interfaces.srv import Photo
 
 
 class PhotoService(Node):
-    """ROS 2 service that returns the latest compressed camera frame."""
+    """Сервис, возвращающий последний кадр сжатого изображения камеры."""
 
     def __init__(self) -> None:
         super().__init__('photo_service')
         self._service = self.create_service(Photo, 'get_photo', self.handle_photo)
-        self.get_logger().info('Photo service ready')
+        self.get_logger().info('Сервис получения фото готов')
 
     def handle_photo(self, request: Photo.Request, response: Photo.Response) -> Photo.Response:
         try:
@@ -53,7 +53,7 @@ class PhotoService(Node):
             self.destroy_subscription(subscription)
 
         if not future.done():
-            raise TimeoutError(f'No photo received on {topic}')
+            raise TimeoutError(f'На топик {topic} не поступило изображение')
         return future.result()
 
 
@@ -63,7 +63,7 @@ def main(args=None) -> None:
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
-        node.get_logger().info('Photo service interrupted by user')
+        node.get_logger().info('Сервис фото остановлен пользователем')
     finally:
         node.destroy_node()
         rclpy.shutdown()

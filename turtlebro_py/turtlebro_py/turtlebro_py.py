@@ -18,6 +18,7 @@ import threading
 import time
 from typing import Any, Callable, Dict, Optional, Tuple
 
+from action_msgs.msg import GoalStatus
 import cv2
 from geometry_msgs.msg import Twist
 from nav2_msgs.action import NavigateToPose
@@ -33,9 +34,8 @@ from std_msgs.msg import Float32MultiArray, Int16
 from tf_transformations import (
     euler_from_quaternion,
     quaternion_from_euler,
-    quaternion_inverse,
-    quaternion_multiply,
 )
+from turtlebro_interfaces.action import Move, Rotation
 
 try:
     from turtlebro_speech.srv import Speech
@@ -64,16 +64,12 @@ def _wait_for_message(node: Node, topic: str, msg_type: Any, timeout: Optional[f
         node.destroy_subscription(subscription)
 
     if not future.done():
-        raise TimeoutError(f'No message received on {topic}')
+        raise TimeoutError(f'На топик {topic} не поступило сообщение')
     return future.result()
 
 
 class TurtleBro:
-    """
-    Класс для базового робота TurtleBro с управлением движением, светодиодами, камерой и звуком.
-
-    Интерфейс совместим с версией под ROS 1.
-    """
+    """Робот TurtleBro с управлением движением, светодиодами, камерой и звуком."""
 
     def __init__(self):
         self._owns_context = not rclpy.is_initialized()
@@ -106,9 +102,13 @@ class TurtleBro:
         # Значения скорости
         self.linear_x_val = 0.09
         self.angular_z_val = 0.9
+        self._action_timeout = 30.0
+        self._move_client = ActionClient(self._node, Move, 'action_move')
+        self._rotate_client = ActionClient(self._node, Rotation, 'action_rotate')
+        self.__wait_for_action_server(self._move_client, 'action_move')
+        self.__wait_for_action_server(self._rotate_client, 'action_rotate')
 
         self.wait_for_odom_to_start()
-        self.sum_target_angle = self.__get_current_angle(self.odom.pose.pose.orientation)
 
     def __del__(self):
         self.shutdown()
@@ -223,36 +223,24 @@ class TurtleBro:
     def __subscriber_thermo_cb(self, msg):
         self.thermo = msg
 
-    # Основной метод движения с трапецеидальной скоростью
+    # Основной метод движения через action
     def __move(self, meters):
         if DEBUG:
             print('Начало движения на метров:', meters)
 
-        init_x = self.odom.pose.pose.position.x
-        init_y = self.odom.pose.pose.position.y
-        total_distance = abs(meters)
-        direction = 1 if meters > 0 else -1
+        goal = Move.Goal()
+        goal.goal = float(meters)
+        goal.speed = float(abs(self.linear_x_val))
 
-        vel = Twist()
+        result = self.__send_action_goal(
+            self._move_client,
+            goal,
+            goal_name='move',
+        )
 
-        while rclpy.ok():
-            dx = self.odom.pose.pose.position.x - init_x
-            dy = self.odom.pose.pose.position.y - init_y
-            distance_passed = math.sqrt(dx**2 + dy**2)
-
-            if distance_passed >= total_distance:
-                vel.linear.x = 0.0
-                self.vel_pub.publish(vel)
-                if DEBUG:
-                    print('Движение завершено. Проехано:', round(distance_passed, 2))
-                return
-
-            speed = self.__move_trapezoidal_trajectory(
-                self.linear_x_val, distance_passed, total_distance
-            )
-            vel.linear.x = direction * speed
-            self.vel_pub.publish(vel)
-            time.sleep(0.03)
+        if DEBUG:
+            print('Движение завершено. Проехано:', round(result.result, 2))
+        return result.result
 
     # Навигация к точке
     def __goto(self, x, y, theta):
@@ -264,101 +252,87 @@ class TurtleBro:
         self.__turn(math.degrees(heading))
         self.__move(distance)
 
-    # Метод поворота с трапецеидальной скоростью
+    def __send_action_goal(
+        self,
+        client: ActionClient,
+        goal_msg,
+        *,
+        goal_name: str,
+        feedback_callback: Optional[Callable] = None,
+    ):
+        if feedback_callback is not None:
+            goal_future = client.send_goal_async(goal_msg, feedback_callback=feedback_callback)
+        else:
+            goal_future = client.send_goal_async(goal_msg)
+
+        goal_handle = self.__wait_for_future(
+            goal_future,
+            self._action_timeout,
+            f'{goal_name} goal response',
+        )
+        if goal_handle is None or not goal_handle.accepted:
+            raise RuntimeError(f'Action {goal_name} отклонено или недоступно')
+
+        result_future = goal_handle.get_result_async()
+        goal_result = self.__wait_for_future(
+            result_future,
+            self._action_timeout,
+            f'{goal_name} result',
+        )
+        if goal_result is None:
+            raise RuntimeError(f'Action {goal_name} не вернул результат')
+        if goal_result.status != GoalStatus.STATUS_SUCCEEDED:
+            raise RuntimeError(f'Action {goal_name} завершен со статусом {goal_result.status}')
+        return goal_result.result
+
+    def __wait_for_future(
+        self,
+        future: Future,
+        timeout: float,
+        description: str,
+    ):
+        start_time = time.perf_counter()
+        while rclpy.ok() and not future.done():
+            if timeout and (time.perf_counter() - start_time) > timeout:
+                raise TimeoutError(f'{description} истек через {timeout:.1f} с')
+            time.sleep(0.01)
+
+        if not future.done():
+            raise RuntimeError(f'{description} не завершился из-за остановки ROS')
+        if future.cancelled():
+            raise RuntimeError(f'{description} был отменен')
+
+        exception = future.exception()
+        if exception is not None:
+            raise exception
+        return future.result()
+
+    def __wait_for_action_server(self, client: ActionClient, name: str, timeout: float = 5.0):
+        if not client.wait_for_server(timeout_sec=timeout):
+            raise RuntimeError(f'Action-сервер {name} недоступен спустя {timeout:.1f} с')
+        self._node.get_logger().info(f'Подключение к Action-серверу {name} выполнено')
+
+    # Метод поворота через action
     def __turn(self, degrees):
-        epsilon = 0.01
-        min_speed = 0.05
-        total_angle = math.radians(abs(degrees))
-        self.sum_target_angle += math.radians(degrees)
-        target_angle = self.sum_target_angle % (2 * math.pi)
-        turn_dir = 1 if degrees > 0 else -1
-        if turn_dir == 0:
-            return
+        if math.isclose(degrees, 0.0, abs_tol=0.1):
+            return 0
 
-        vel = Twist()
+        if DEBUG:
+            print('Поворот на градусов:', degrees)
 
-        while rclpy.ok():
-            current_angle = self.__get_current_angle(self.odom.pose.pose.orientation) % (
-                2 * math.pi
-            )
-            delta = target_angle - current_angle
-            if delta > math.pi:
-                delta -= 2 * math.pi
-            elif delta < -math.pi:
-                delta += 2 * math.pi
+        goal = Rotation.Goal()
+        goal.goal = int(round(degrees))
+        goal.speed = float(abs(self.angular_z_val))
 
-            if abs(delta) <= epsilon:
-                vel.angular.z = 0.0
-                self.vel_pub.publish(vel)
-                if DEBUG:
-                    print(f'Поворот завершен. Угол: {math.degrees(current_angle):.2f}°')
-                return
+        result = self.__send_action_goal(
+            self._rotate_client,
+            goal,
+            goal_name='rotate',
+        )
 
-            speed = self.__turn_trapezoidal_trajectory(
-                self.angular_z_val, delta, total_angle, min_speed
-            )
-            vel.angular.z = turn_dir * speed
-            self.vel_pub.publish(vel)
-            time.sleep(0.05)
-
-    # Вычисление скорости по трапецеидальной траектории для движения
-    def __move_trapezoidal_trajectory(
-        self,
-        max_speed,
-        distance_passed,
-        total_distance,
-        min_speed=0.05,
-    ):
-        move_deccel = max(total_distance * 0.5, 0.10)
-        distance_remaining = total_distance - distance_passed
-        if distance_remaining < move_deccel:
-            speed = max(min_speed, max_speed * (distance_remaining / move_deccel))
-        else:
-            speed = max_speed
-        return speed
-
-    # Вычисление скорости по трапецеидальной траектории для поворота
-    def __turn_trapezoidal_trajectory(
-        self,
-        max_speed,
-        delta,
-        total_angle,
-        min_speed=0.075,
-    ):
-        turn_deccel = max(total_angle * 0.7, 0.2)
-        if abs(delta) < turn_deccel:
-            speed = max(min_speed, max_speed * (abs(delta) / turn_deccel))
-        else:
-            speed = max_speed
-        return speed
-
-    # Различные вспомогательные функции для углов и дистанций
-    def __get_angle_diff(self, prev_orientation, current_orientation):
-        prev_q = [
-            prev_orientation.x,
-            prev_orientation.y,
-            prev_orientation.z,
-            prev_orientation.w,
-        ]
-        current_q = [
-            current_orientation.x,
-            current_orientation.y,
-            current_orientation.z,
-            current_orientation.w,
-        ]
-        delta_q = quaternion_multiply(prev_q, quaternion_inverse(current_q))
-        (_, _, yaw) = euler_from_quaternion(delta_q)
-        return -yaw
-
-    def __get_current_angle(self, current_orientation):
-        current_q = [
-            current_orientation.x,
-            current_orientation.y,
-            current_orientation.z,
-            current_orientation.w,
-        ]
-        (_, _, yaw) = euler_from_quaternion(current_q)
-        return yaw
+        if DEBUG:
+            print(f'Поворот завершен. Угол: {result.result}')
+        return result.result
 
     def __get_turn_angle_to_point(self, x, y):
         angle_q = [
@@ -419,14 +393,14 @@ class TurtleNav(TurtleBro):
 
     def __goto(self, x, y, theta):
         if not self._nav_client.wait_for_server(timeout_sec=5.0):
-            raise RuntimeError('NavigateToPose action server not available')
+            raise RuntimeError('Action-сервер NavigateToPose недоступен')
 
         goal = self.__goal_message_assemble(x, y, theta)
         send_future = self._nav_client.send_goal_async(goal)
         rclpy.spin_until_future_complete(self._node, send_future)
         goal_handle = send_future.result()
         if goal_handle is None or not goal_handle.accepted:
-            raise RuntimeError('NavigateToPose goal rejected')
+            raise RuntimeError('Цель NavigateToPose отклонена')
 
         result_future = goal_handle.get_result_async()
         rclpy.spin_until_future_complete(self._node, result_future)
@@ -580,10 +554,10 @@ class Utility:
         if not isinstance(text, str):
             text = str(text)
         if Speech is None or self.speech_client is None:
-            raise RuntimeError('Speech service unavailable: turtlebro_speech not installed')
+            raise RuntimeError('Сервис озвучивания недоступен: turtlebro_speech не установлен')
         while not self.speech_client.wait_for_service(timeout_sec=1.0):
             if not rclpy.ok():
-                raise RuntimeError('Speech service unavailable')
+                raise RuntimeError('Сервис озвучивания недоступен')
         request = Speech.Request()
         request.data = text
         future = self.speech_client.call_async(request)

@@ -2,7 +2,7 @@
 <package format="3">
   <name>turtlebro_py</name>
   <version>0.1.0</version>
-  <description>Python API for TurtleBro robots on ROS 2 Jazzy.</description>
+  <description>Python API для управления роботами TurtleBro на ROS 2</description>
   <maintainer email="cola@cactus.ru">Ubercola</maintainer>
   <license>TODO</license>
 
@@ -18,6 +18,7 @@
   <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
   <depend>tf_transformations</depend>
+  <depend>turtlebro_interfaces</depend>
 
   <exec_depend>rosidl_default_runtime</exec_depend>
 

@@ -12,18 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-"""TurtleBro action helpers for ROS 2."""
+"""Вспомогательные action-компоненты TurtleBro."""
 
 from .commands_controller import CommandsController
 from .move_client import MoveClient
+from .move_server import MoveServer
+from .photo_service import PhotoService
+from .radio import RadioCommandNode
 from .rotate_client import RotateClient
+from .rotate_server import RotateServer
 from .servo_client import ServoClient
 from .video_client import VideoClient
 
 __all__ = [
     'CommandsController',
     'MoveClient',
+    'MoveServer',
+    'PhotoService',
+    'RadioCommandNode',
     'RotateClient',
+    'RotateServer',
     'ServoClient',
     'VideoClient',
 ]

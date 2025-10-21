@@ -22,12 +22,12 @@ from sensor_msgs.msg import CompressedImage
 
 
 class VideoClient:
-    """Blocking helper that fetches a single compressed image frame."""
+    """Блокирующий помощник для получения одного кадра сжатого изображения."""
 
     def __init__(self, node: Node, topic: str = '/front_camera/compressed') -> None:
         self._node = node
         self._topic = topic
-        self._node.get_logger().info('Video client ready on %s', topic)
+        self._node.get_logger().info(f'Видеоклиент готов на топике {topic}')
 
     def getImage(self, timeout: Optional[float] = None) -> bytes:
         future: Future = Future()
@@ -49,7 +49,7 @@ class VideoClient:
 
         if future.done():
             return future.result()
-        raise TimeoutError(f'No image received on {self._topic}')
+        raise TimeoutError(f'На топик {self._topic} не поступило изображение')
 
 
 def main(args: Optional[list[str]] = None) -> None:
@@ -58,9 +58,9 @@ def main(args: Optional[list[str]] = None) -> None:
     try:
         client = VideoClient(node)
         data = client.getImage(timeout=5.0)
-        node.get_logger().info('Received compressed image with %d bytes', len(data))
+        node.get_logger().info(f'Получено сжатое изображение размером {len(data)} байт')
     except Exception as exc:  # noqa: BLE001
-        node.get_logger().error('Video client failed: %s', exc)
+        node.get_logger().error(f'Сбой видеоклиента: {exc}')
     finally:
         node.destroy_node()
         rclpy.shutdown()

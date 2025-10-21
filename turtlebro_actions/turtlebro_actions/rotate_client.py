@@ -19,38 +19,35 @@ import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
 
-from turtlebro_actions.action import Move
+from turtlebro_interfaces.action import Rotation
 
 
-class MoveClient:
-    """Thin wrapper around the Move action client that preserves the ROS 1 API."""
+class RotateClient:
+    """Клиент Action поворота, совместимый с текущим API."""
 
     def __init__(self, node: Node, wait_timeout: float = 5.0) -> None:
         self._node = node
-        self._client = ActionClient(node, Move, 'action_move')
-        self._wait_for_server(wait_timeout)
+        self._client = ActionClient(node, Rotation, 'action_rotate')
+        if not self._client.wait_for_server(timeout_sec=wait_timeout):
+            raise RuntimeError('Action-сервер поворота недоступен')
+        self._node.get_logger().info('Клиент поворота подключен')
 
-    def _wait_for_server(self, timeout: float) -> None:
-        if not self._client.wait_for_server(timeout_sec=timeout):
-            raise RuntimeError('Move action server not available')
-        self._node.get_logger().info('Move action client connected')
-
-    def SendGoal(self, goal_val: float, speed_val: float) -> Move.Result:
-        goal = Move.Goal()
-        goal.goal = float(goal_val)
+    def SendGoal(self, goal_val: int, speed_val: float) -> Rotation.Result:
+        goal = Rotation.Goal()
+        goal.goal = int(goal_val)
         goal.speed = float(speed_val)
 
-        send_goal_future = self._client.send_goal_async(
+        send_future = self._client.send_goal_async(
             goal,
             feedback_callback=self._action_feedback,
         )
-        rclpy.spin_until_future_complete(self._node, send_goal_future)
-        goal_handle = send_goal_future.result()
+        rclpy.spin_until_future_complete(self._node, send_future)
+        goal_handle = send_future.result()
 
         if goal_handle is None or not goal_handle.accepted:
-            self._node.get_logger().warn('Move goal rejected')
-            result = Move.Result()
-            result.result = 0.0
+            self._node.get_logger().warn('Цель поворота отклонена')
+            result = Rotation.Result()
+            result.result = 0
             return result
 
         result_future = goal_handle.get_result_async()
@@ -58,25 +55,25 @@ class MoveClient:
         goal_result = result_future.result()
 
         if goal_result is None:
-            result = Move.Result()
-            result.result = 0.0
+            result = Rotation.Result()
+            result.result = 0
             return result
 
         return goal_result.result
 
-    def _action_feedback(self, feedback_msg: Move.Feedback) -> None:
-        self._node.get_logger().info('Current pose: %.3f', feedback_msg.feedback)
+    def _action_feedback(self, feedback: Rotation.Feedback) -> None:
+        self._node.get_logger().info(f'Текущий угол: {feedback.feedback}')
 
 
 def main(args: Optional[list[str]] = None) -> None:
     rclpy.init(args=args)
-    node = Node('move_client_node')
+    node = Node('rotate_client_node')
     try:
-        client = MoveClient(node)
-        result = client.SendGoal(0.5, 0.22)
-        node.get_logger().info('Action Result pose: %.3f', result.result)
+        client = RotateClient(node)
+        result = client.SendGoal(10, 1.2)
+        node.get_logger().info(f'Результат действия поворота: {result.result}')
     except Exception as exc:  # noqa: BLE001
-        node.get_logger().error('Move client failed: %s', exc)
+        node.get_logger().error(f'Сбой клиента поворота: {exc}')
     finally:
         node.destroy_node()
         rclpy.shutdown()

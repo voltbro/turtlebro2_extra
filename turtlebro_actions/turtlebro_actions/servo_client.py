@@ -22,30 +22,34 @@ from std_msgs.msg import UInt16
 
 
 class ServoClient:
-    """Helper around a std_msgs/UInt16 topic that controls a servo."""
+    """Обертка над топиком std_msgs/UInt16 для управления сервоприводом."""
 
     def __init__(self, node: Node, servo: int) -> None:
         self._node = node
         self.servo = servo
         topic = f'/servo{servo}'
         self.pub = node.create_publisher(UInt16, topic, 10)
-        self._node.get_logger().info('Servo client ready on %s', topic)
+        self._node.get_logger().info(f'Клиент сервопривода готов на топике {topic}')
 
     def move_await(self, angle: int) -> None:
-        self._node.get_logger().info('Move servo %s to %i (await)', self.servo, angle)
+        self._node.get_logger().info(
+            f'Перемещение сервопривода {self.servo} к {angle} град. (ожидание подписчика)'
+        )
         while rclpy.ok() and self.pub.get_subscription_count() < 1:
             time.sleep(0.2)
         self.move(angle)
 
     def move(self, angle: int) -> None:
-        self._node.get_logger().info('Move servo %s to %i', self.servo, angle)
+        self._node.get_logger().info(
+            f'Перемещение сервопривода {self.servo} к {angle} град.'
+        )
         msg = UInt16()
         msg.data = int(angle)
         self.pub.publish(msg)
         time.sleep(1.0)
 
     def shutdown(self) -> None:
-        self._node.get_logger().info('Servo %s client shutdown', self.servo)
+        self._node.get_logger().info(f'Клиент сервопривода {self.servo} завершает работу')
         self._node.destroy_publisher(self.pub)
 
 
@@ -59,7 +63,7 @@ def main(args: Optional[list[str]] = None) -> None:
         servo_client = ServoClient(node, servo_num)
         servo_client.move_await(90)
     except Exception as exc:  # noqa: BLE001
-        node.get_logger().error('Servo client failed: %s', exc)
+        node.get_logger().error(f'Сбой клиента сервопривода: {exc}')
     finally:
         node.destroy_node()
         rclpy.shutdown()

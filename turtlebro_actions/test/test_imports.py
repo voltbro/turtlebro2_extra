@@ -13,22 +13,37 @@
 # limitations under the License.
 #
 import importlib
+from pathlib import Path
+import sys
+
+import pytest
+
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+if str(PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_ROOT))
 
 MODULES = [
     'turtlebro_actions',
-    'turtlebro_actions_nodes',
-    'turtlebro_actions_nodes.commands_controller',
-    'turtlebro_actions_nodes.move_client',
-    'turtlebro_actions_nodes.move_server',
-    'turtlebro_actions_nodes.photo_service',
-    'turtlebro_actions_nodes.radio',
-    'turtlebro_actions_nodes.rotate_client',
-    'turtlebro_actions_nodes.rotate_server',
-    'turtlebro_actions_nodes.servo_client',
-    'turtlebro_actions_nodes.video_client',
+    'turtlebro_actions.commands_controller',
+    'turtlebro_actions.move_client',
+    'turtlebro_actions.move_server',
+    'turtlebro_actions.photo_service',
+    'turtlebro_actions.radio',
+    'turtlebro_actions.rotate_client',
+    'turtlebro_actions.rotate_server',
+    'turtlebro_actions.servo_client',
+    'turtlebro_actions.video_client',
 ]
 
 
 def test_modules_can_be_imported():
+    try:
+        importlib.import_module('turtlebro_interfaces.action')
+    except ImportError as exc:
+        pytest.skip(f'Пропуск проверки импорта: {exc}')
+    try:
+        importlib.import_module('rclpy')
+    except (ImportError, OSError) as exc:
+        pytest.skip(f'Пропуск проверки импорта: {exc}')
     for module in MODULES:
         importlib.import_module(module)

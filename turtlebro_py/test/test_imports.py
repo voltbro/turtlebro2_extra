@@ -14,6 +14,8 @@
 #
 import importlib
 
+import pytest
+
 MODULES = [
     'turtlebro_py',
     'turtlebro_py.turtlebro_py',
@@ -21,5 +23,9 @@ MODULES = [
 
 
 def test_modules_can_be_imported():
+    try:
+        importlib.import_module('rclpy')
+    except (ImportError, OSError) as exc:
+        pytest.skip(f'Пропуск проверки импорта: {exc}')
     for module in MODULES:
         importlib.import_module(module)

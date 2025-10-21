@@ -1,13 +1,13 @@
 from setuptools import setup
 
 package_name = 'turtlebro_actions'
-python_package = 'turtlebro_actions_nodes'
+packages = ['turtlebro_actions']
 
 setup(
     name=package_name,
     version='0.1.0',
-    packages=[python_package],
-    package_dir={python_package: 'turtlebro_actions_nodes'},
+    packages=packages,
+    package_dir={'turtlebro_actions': 'turtlebro_actions'},
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
@@ -16,17 +16,17 @@ setup(
     zip_safe=True,
     maintainer='robot',
     maintainer_email='robot@todo.todo',
-    description='Turtlebro action servers, clients, and helpers for ROS 2 Jazzy',
+    description='Action-серверы, клиенты и вспомогательные утилиты TurtleBro для ROS 2',
     license='TODO',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'move_server = turtlebro_actions_nodes.move_server:main',
-            'move_client = turtlebro_actions_nodes.move_client:main',
-            'rotate_server = turtlebro_actions_nodes.rotate_server:main',
-            'rotate_client = turtlebro_actions_nodes.rotate_client:main',
-            'photo_service = turtlebro_actions_nodes.photo_service:main',
-            'radio_command = turtlebro_actions_nodes.radio:main',
+            'move_server = turtlebro_actions.move_server:main',
+            'move_client = turtlebro_actions.move_client:main',
+            'rotate_server = turtlebro_actions.rotate_server:main',
+            'rotate_client = turtlebro_actions.rotate_client:main',
+            'photo_service = turtlebro_actions.photo_service:main',
+            'radio_command = turtlebro_actions.radio:main',
         ],
     },
 )

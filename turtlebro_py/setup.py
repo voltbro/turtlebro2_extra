@@ -14,7 +14,7 @@ setup(
     zip_safe=True,
     maintainer='Ubercola',
     maintainer_email='cola@cactus.ru',
-    description='Python control API for TurtleBro on ROS 2 Jazzy.',
+    description='Python API управления TurtleBro для ROS 2.',
     license='TODO',
     tests_require=['pytest'],
     entry_points={

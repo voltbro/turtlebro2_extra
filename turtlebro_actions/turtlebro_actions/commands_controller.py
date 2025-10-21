@@ -26,7 +26,7 @@ from .video_client import VideoClient
 
 
 class CommandsController:
-    """Dispatches radio commands to the corresponding action or topic clients."""
+    """Маршрутизирует радиокоманды к соответствующим action- и topic-клиентам."""
 
     def __init__(
         self,
@@ -44,9 +44,9 @@ class CommandsController:
         self.linear_speed = linear_speed
         self.angular_speed = angular_speed
 
-        self._node.get_logger().info('Init clients')
-        self._node.get_logger().info('Set linear speed %.3f', self.linear_speed)
-        self._node.get_logger().info('Set angular speed %.3f', self.angular_speed)
+        self._node.get_logger().info('Инициализация клиентов')
+        self._node.get_logger().info(f'Установлена линейная скорость {self.linear_speed:.3f}')
+        self._node.get_logger().info(f'Установлена угловая скорость {self.angular_speed:.3f}')
 
         self.movie_client = MoveClient(node)
         self.rotate_client = RotateClient(node)
@@ -55,15 +55,19 @@ class CommandsController:
         self.servo45 = ServoClient(node, 45)
 
     def execute(self, command: int, value: int) -> Optional[object]:
-        self._node.get_logger().info('Execute: %s, value: %s', command, value)
+        self._node.get_logger().info(f'Выполнение команды: {command}, значение: {value}')
 
         if command == 1:
             self.linear_speed = value / 100.0
-            self._node.get_logger().info('Set linear speed %.3f', self.linear_speed)
+            self._node.get_logger().info(
+                f'Установлена линейная скорость {self.linear_speed:.3f}'
+            )
 
         elif command == 2:
             self.angular_speed = value / 1000.0
-            self._node.get_logger().info('Set angular speed %.3f', self.angular_speed)
+            self._node.get_logger().info(
+                f'Установлена угловая скорость {self.angular_speed:.3f}'
+            )
 
         elif command == 11:
             distance = value / 100.0
@@ -123,10 +127,10 @@ def main(args=None) -> None:
                 struct_format,
                 chunks[i * struct_len:(i + 1) * struct_len],
             )
-            node.get_logger().info('Test command %s value %s', command, value)
+            node.get_logger().info(f'Тестовая команда {command}, значение {value}')
             controller.execute(command, value)
         except Exception as exc:  # noqa: BLE001
-            node.get_logger().error('Command execution failed: %s', exc)
+            node.get_logger().error(f'Ошибка при выполнении команды: {exc}')
 
     controller.shutdown()
 
