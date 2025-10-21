@@ -111,9 +111,9 @@ class TurtleBro:
         self.wait_for_odom_to_start()
 
     def __del__(self):
-        self.shutdown()
+        self.__shutdown()
 
-    def shutdown(self):
+    def __shutdown(self):
         """Корректно завершить работу с ROS 2."""
         if hasattr(self, 'vel_pub'):
             self.vel_pub.publish(Twist())
