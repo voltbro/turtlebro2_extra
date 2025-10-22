@@ -13,6 +13,7 @@
 # limitations under the License.
 #
 import math
+import time
 
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
@@ -60,7 +61,7 @@ class MoveServer(Node):
         self.get_logger().info('Получен запрос на отмену перемещения')
         return CancelResponse.ACCEPT
 
-    async def execute_callback(self, goal_handle):
+    def execute_callback(self, goal_handle):
         goal = goal_handle.request
         total_distance = float(abs(goal.goal))
         if math.isclose(total_distance, 0.0, abs_tol=1e-4):
@@ -79,7 +80,7 @@ class MoveServer(Node):
 
         cmd = Twist()
         feedback = Move.Feedback()
-        rate = self.create_rate(40)
+        dt = 1.0 / 40.0  # 40 Гц
 
         self.get_logger().info('Выполняю цель перемещения')
 
@@ -116,9 +117,9 @@ class MoveServer(Node):
             cmd.linear.x = direction * speed
             self.cmd_vel.publish(cmd)
 
-            await rate.sleep()
+            time.sleep(dt)
 
-        # Fallback in case rclpy shuts down
+        # Fallback на случай shutdown rclpy
         self.cmd_vel.publish(Twist())
         goal_handle.abort()
         return self._build_result(0.0, direction)
