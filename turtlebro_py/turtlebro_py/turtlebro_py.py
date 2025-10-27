@@ -26,6 +26,7 @@ from nav_msgs.msg import Odometry
 import numpy as np
 import rclpy
 from rclpy.action import ActionClient
+from rclpy.client import Client
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.task import Future
@@ -36,6 +37,7 @@ from tf_transformations import (
     quaternion_from_euler,
 )
 from turtlebro_interfaces.action import Move, Rotation
+from turtlebro_interfaces.srv import RecordAudio
 
 try:
     from turtlebro_speech.srv import Speech
@@ -107,6 +109,8 @@ class TurtleBro:
         self._rotate_client = ActionClient(self._node, Rotation, 'action_rotate')
         self.__wait_for_action_server(self._move_client, 'action_move')
         self.__wait_for_action_server(self._rotate_client, 'action_rotate')
+        self._record_client = self._node.create_client(RecordAudio, 'record_audio')
+        self.__wait_for_service(self._record_client, 'record_audio')
 
         self.wait_for_odom_to_start()
 
@@ -188,8 +192,36 @@ class TurtleBro:
     def get_photo(self):
         return self.u.photo(0, 'robophoto')
 
-    def record(self, timeval=3, filename='turtlebro_sound'):
-        self.u.record(timeval, filename)
+    def record(
+        self,
+        timeval: float = 3,
+        filename: str = 'turtlebro_sound',
+        device: str = '',
+    ):
+        assert isinstance(timeval, (int, float)) and timeval > 0, (
+            'Временной интервал должен быть положительным числом'
+        )
+        request = RecordAudio.Request()
+        request.duration = float(timeval)
+        request.filename = filename or 'turtlebro_sound'
+        request.device = device or ''
+
+        if not self._record_client.wait_for_service(timeout_sec=1.0):
+            raise RuntimeError('Сервис record_audio недоступен')
+
+        timeout = max(timeval + 2.0, 5.0)
+        future = self._record_client.call_async(request)
+        rclpy.spin_until_future_complete(self._node, future, timeout_sec=timeout)
+
+        if not future.done():
+            raise TimeoutError('Сервис record_audio не ответил вовремя')
+
+        response = future.result()
+        if response is None:
+            raise RuntimeError('Сервис record_audio вернул пустой ответ')
+        if not response.success:
+            raise RuntimeError(response.message or 'Ошибка записи аудио')
+        return response.filepath
 
     def say(self, text='Привет'):
         self.u.say(text)
@@ -311,6 +343,11 @@ class TurtleBro:
         if not client.wait_for_server(timeout_sec=timeout):
             raise RuntimeError(f'Action-сервер {name} недоступен спустя {timeout:.1f} с')
         self._node.get_logger().info(f'Подключение к Action-серверу {name} выполнено')
+
+    def __wait_for_service(self, client: Client, name: str, timeout: float = 5.0):
+        if not client.wait_for_service(timeout_sec=timeout):
+            raise RuntimeError(f'Сервис {name} недоступен спустя {timeout:.1f} с')
+        self._node.get_logger().info(f'Подключение к сервису {name} выполнено')
 
     # Метод поворота через action
     def __turn(self, degrees):
@@ -530,24 +567,6 @@ class Utility:
         except Exception as exc:  # noqa: BLE001
             print(exc)
         return None
-
-    # Запись звука
-    def record(self, timeval, filename, file_format='.wav'):
-        assert timeval > 0 and isinstance(timeval, (float, int)), (
-            'Временной интервал должен быть > 0'
-        )
-        process = subprocess.Popen([
-            'arecord',
-            '-D',
-            'hw:1,0',
-            '-f',
-            'S16_LE',
-            '-r',
-            '48000',
-            f'/home/pi/{filename}{file_format}',
-        ])
-        time.sleep(timeval)
-        process.kill()
 
     # Произнесение текста
     def say(self, text):

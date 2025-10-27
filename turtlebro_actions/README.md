@@ -18,7 +18,7 @@ source install/setup.bash
 ros2 launch turtlebro_actions action_servers.launch.py
 ```
 
-Лаунч поднимает серверы движения (`MoveServer`) и поворота (`RotateServer`), а также сервис фотографирования (`PhotoService`).
+Лаунч поднимает серверы движения (`MoveServer`) и поворота (`RotateServer`), сервис фотографирования (`PhotoService`), а также сервис записи звука (`RecordAudioService`).
 
 ## Структура Python-модулей
 
@@ -32,6 +32,30 @@ ros2 launch turtlebro_actions action_servers.launch.py
 from turtlebro_actions import MoveClient, RotateServer
 ```
 
-## Радиомост
+## Фото и звук
 
-Командный режим радиоуправления и файл `radio.launch.py` вынесены в отдельный пакет `turtlebro_radio`. Актуальную инструкцию по радиомосту смотрите в `turtlebro_radio/README.md`.
+- `PhotoService` предоставляет сервис `get_photo` и возвращает последнее сжатое изображение с фронтальной камеры.
+- `RecordAudioService` обслуживает сервис `record_audio` и записывает звук с ALSA-устройства (по умолчанию `hw:1,0`) через библиотеку `pyalsaaudio` в WAV-файл под `/home/pi`. Для работы требуется пакет `python3-alsaaudio`.
+
+Параметры сервиса аудиозаписи:
+
+- `duration` — длительность записи в секундах (> 0);
+- `filename` — базовое имя файла (расширение задаётся отдельно);
+- `device` — строковое имя ALSA-устройства (например, `hw:1,0`), необязательный параметр, по умолчанию берётся из параметра `device` узла.
+
+Чтобы подобрать идентификатор устройства записи, воспользуйтесь одной из утилит:
+
+- `arecord -l` — покажет физические устройства и их номера (`card X`, `device Y`), после чего можно сформировать строку `hw:X,Y`;
+- Python: `python3 - <<'PY'
+import alsaaudio
+print(alsaaudio.cards())
+print(alsaaudio.pcms(alsaaudio.PCM_CAPTURE))
+PY`
+
+Изменить устройство по умолчанию можно либо при вызове сервиса (`device: 'hw:2,0'`), либо через параметр узла: `ros2 param set /record_audio_service device hw:2,0`.
+
+Например, чтобы записать 5 секунд в WAV:
+
+```
+ros2 service call /record_audio turtlebro_interfaces/srv/RecordAudio "{duration: 5.0, filename: 'lesson', device: ''}"
+```
