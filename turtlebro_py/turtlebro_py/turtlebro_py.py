@@ -37,7 +37,7 @@ from tf_transformations import (
     quaternion_from_euler,
 )
 from turtlebro_interfaces.action import Move, Rotation
-from turtlebro_interfaces.srv import RecordAudio
+from turtlebro_interfaces.srv import Photo, RecordAudio
 
 try:
     from turtlebro_speech.srv import Speech
@@ -463,6 +463,7 @@ class Utility:
         self.speech_client = None
         if Speech is not None:
             self.speech_client = self._node.create_client(Speech, 'festival_speech')
+        self._photo_client = self._node.create_client(Photo, 'get_photo')
 
         time_counter = 0.0
         time_to_wait = 3.0
@@ -550,22 +551,35 @@ class Utility:
     def photo(self, save, name):
         assert isinstance(name, str), 'Имя файла фото должно быть строкой'
         try:
-            image_msg = _wait_for_message(
-                self._node,
-                '/front_camera/image_raw/compressed',
-                CompressedImage,
-                timeout=3.0,
-            )
+            if not self._photo_client.wait_for_service(timeout_sec=1.0):
+                raise RuntimeError('Сервис get_photo недоступен')
+
+            request = Photo.Request()
+            future = self._photo_client.call_async(request)
+            rclpy.spin_until_future_complete(self._node, future, timeout_sec=5.0)
+
+            if not future.done():
+                raise TimeoutError('Сервис get_photo не ответил вовремя')
+
+            response = future.result()
+            if response is None:
+                raise RuntimeError('Сервис get_photo вернул пустой ответ')
+
+            image_msg = response.photo
             np_arr = np.frombuffer(image_msg.data, np.uint8)
             image_from_ros_camera = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            if image_from_ros_camera is None:
+                raise RuntimeError('Не удалось декодировать изображение из ответа get_photo')
+
             if save:
-                cv2.imwrite(f'/home/pi/{name}.jpg', image_from_ros_camera)
+                if not cv2.imwrite(f'/home/pi/{name}.jpg', image_from_ros_camera):
+                    raise RuntimeError(f'Не удалось сохранить фото в /home/pi/{name}.jpg')
                 if DEBUG:
                     print(f'Фото записано в /home/pi/{name}.jpg')
             else:
                 return image_from_ros_camera
         except Exception as exc:  # noqa: BLE001
-            print(exc)
+            self._node.get_logger().error(str(exc))
         return None
 
     # Произнесение текста
