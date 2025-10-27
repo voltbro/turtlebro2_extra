@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # Copyright 2024 VoltBro
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,13 +20,14 @@ import time
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 import rclpy
-from rclpy.action import ActionServer, CancelResponse, GoalResponse
+from rclpy.action.server import ActionServer, CancelResponse, GoalResponse
+
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
 
 from turtlebro_interfaces.action import Move
 
-from .motion_profile import compute_trapezoidal_speed
+from turtlebro_actions.utils.motion_profile import compute_trapezoidal_speed
 
 
 class MoveServer(Node):

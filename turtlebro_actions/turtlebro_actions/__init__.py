@@ -14,24 +14,22 @@
 #
 """Вспомогательные action-компоненты TurtleBro."""
 
-from .commands_controller import CommandsController
-from .move_client import MoveClient
-from .move_server import MoveServer
-from .photo_service import PhotoService
-from .radio import RadioCommandNode
-from .rotate_client import RotateClient
-from .rotate_server import RotateServer
-from .servo_client import ServoClient
-from .video_client import VideoClient
+from .examples.move_client import MoveClient
+from .examples.rotate_client import RotateClient
+from .examples.servo_client import ServoClient
+from .examples.video_client import VideoClient
+
+
+from .servers.move_server import MoveServer
+from .servers.photo_service import PhotoService
+from .servers.rotate_server import RotateServer
 
 __all__ = [
-    'CommandsController',
-    'MoveClient',
-    'MoveServer',
-    'PhotoService',
-    'RadioCommandNode',
-    'RotateClient',
-    'RotateServer',
-    'ServoClient',
-    'VideoClient',
+    "MoveClient",
+    "MoveServer",
+    "PhotoService",
+    "RotateClient",
+    "RotateServer",
+    "ServoClient",
+    "VideoClient",
 ]

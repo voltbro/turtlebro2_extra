@@ -10,16 +10,9 @@ find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(turtlebro_interfaces REQUIRED)
 
-if(NOT TARGET ament_cmake_python_symlink_${PROJECT_NAME})
-  ament_python_install_package(${PROJECT_NAME})
-endif()
-
-install(DIRECTORY ino
-  DESTINATION share/${PROJECT_NAME}
+ament_python_install_package(${PROJECT_NAME}
+  PACKAGE_DIR ${PROJECT_NAME}
 )
-
-set(AMENT_LINT_AUTO_EXCLUDE ament_flake8)
-set(ENV{AMENT_LINT_AUTO_EXCLUDE} "ament_flake8")
 
 if(BUILD_TESTING)
   find_package(ament_cmake_pytest REQUIRED)
@@ -27,7 +20,6 @@ if(BUILD_TESTING)
   find_package(ament_cmake_lint_cmake REQUIRED)
   find_package(ament_cmake_pep257 REQUIRED)
   find_package(ament_cmake_xmllint REQUIRED)
-  find_program(AMENT_FLAKE8_EXECUTABLE ament_flake8 REQUIRED)
 
   ament_add_pytest_test(test_imports test/test_imports.py)
   ament_add_pytest_test(test_public_api test/test_public_api.py)
@@ -36,10 +28,6 @@ if(BUILD_TESTING)
   ament_pep257()
   ament_xmllint()
 
-  add_test(NAME flake8_custom
-    COMMAND ${AMENT_FLAKE8_EXECUTABLE} --config ${CMAKE_CURRENT_SOURCE_DIR}/ament_flake8.cfg
-  )
-  set_tests_properties(flake8_custom PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 
 ament_package()

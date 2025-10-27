@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # Copyright 2024 VoltBro
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,7 +18,7 @@ import sys
 from typing import Optional
 
 import rclpy
-from rclpy.action import ActionClient
+from rclpy.action.client import ActionClient
 from rclpy.node import Node
 
 from turtlebro_interfaces.action import Rotation

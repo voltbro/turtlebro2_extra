@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # Copyright 2024 VoltBro
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,14 +19,14 @@ import math
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 import rclpy
-from rclpy.action import ActionServer, CancelResponse, GoalResponse
+from rclpy.action.server import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
 from tf_transformations import euler_from_quaternion
 
 from turtlebro_interfaces.action import Rotation
 
-from .motion_profile import compute_trapezoidal_speed, normalize_angle
+from turtlebro_actions.utils.motion_profile import compute_trapezoidal_speed, normalize_angle
 
 
 class RotateServer(Node):
