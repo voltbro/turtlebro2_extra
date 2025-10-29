@@ -23,27 +23,27 @@ if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
 MODULES = [
-    'turtlebro_actions',
-    'turtlebro_actions.commands_controller',
-    'turtlebro_actions.move_client',
-    'turtlebro_actions.move_server',
-    'turtlebro_actions.photo_service',
-    'turtlebro_actions.radio',
-    'turtlebro_actions.rotate_client',
-    'turtlebro_actions.rotate_server',
-    'turtlebro_actions.servo_client',
-    'turtlebro_actions.video_client',
+    "turtlebro_actions",
+    "turtlebro_actions.servers",
+    "turtlebro_actions.examples",
+    "turtlebro_actions.examples.move_client",
+    "turtlebro_actions.examples.rotate_client",
+    "turtlebro_actions.examples.servo_client",
+    "turtlebro_actions.examples.video_client",
+    "turtlebro_actions.servers.rotate_server",
+    "turtlebro_actions.servers.move_server",
+    "turtlebro_actions.servers.photo_service",
 ]
 
 
 def test_modules_can_be_imported():
     try:
-        importlib.import_module('turtlebro_interfaces.action')
+        importlib.import_module("turtlebro_interfaces.action")
     except ImportError as exc:
-        pytest.skip(f'Пропуск проверки импорта: {exc}')
+        pytest.skip(f"Пропуск проверки импорта: {exc}")
     try:
-        importlib.import_module('rclpy')
+        importlib.import_module("rclpy")
     except (ImportError, OSError) as exc:
-        pytest.skip(f'Пропуск проверки импорта: {exc}')
+        pytest.skip(f"Пропуск проверки импорта: {exc}")
     for module in MODULES:
         importlib.import_module(module)

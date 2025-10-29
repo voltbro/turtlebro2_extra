@@ -19,10 +19,10 @@ from typing import Optional
 import rclpy
 from rclpy.node import Node
 
-from .move_client import MoveClient
-from .rotate_client import RotateClient
-from .servo_client import ServoClient
-from .video_client import VideoClient
+from turtlebro_actions import MoveClient
+from turtlebro_actions import RotateClient
+from turtlebro_actions import ServoClient
+from turtlebro_actions import VideoClient
 
 
 class CommandsController:
@@ -35,11 +35,13 @@ class CommandsController:
         angular_speed: float = 1.0,
     ) -> None:
         self._owns_node = False
+
         if node is None:
             if not rclpy.is_initialized():
                 rclpy.init()
             node = rclpy.create_node('commands_control_node')
             self._owns_node = True
+
         self._node = node
         self.linear_speed = linear_speed
         self.angular_speed = angular_speed

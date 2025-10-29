@@ -48,7 +48,7 @@ def generate_launch_description() -> LaunchDescription:
     )
 
     radio_node = Node(
-        package='turtlebro_actions',
+        package='turtlebro_radio',
         executable='radio_command',
         name='radio_command_node',
         output='screen',

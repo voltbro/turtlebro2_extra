@@ -9,7 +9,7 @@ mkdir -p ~/turtlebro_ws/src
 cd ~/turtlebro_ws/src
 git clone https://github.com/voltbro/turtlebro_extra
 cd ..
-colcon build --packages-select turtlebro_actions turtlebro_py
+colcon build --packages-select turtlebro_actions turtlebro_py turtlebro_radio
 source install/setup.bash
 ```
 
@@ -18,7 +18,11 @@ source install/setup.bash
 ### turtlebro_actions
 
 - `ros2 launch turtlebro_actions action_servers.launch.py` — поднимает action-серверы движения и поворота.
-- `ros2 launch turtlebro_actions radio.launch.py` — стартует радиомост вместе с action-серверами и позволяет передать параметры порта/скоростей.
+- Готовые Python-клиенты доступны в модулях `turtlebro_actions.examples.*`, серверы — в `turtlebro_actions.servers.*`.
+
+### turtlebro_radio
+
+- `ros2 launch turtlebro_radio radio.launch.py port:=/dev/ttyUSB0` — стартует радиомост и позволяет передать параметры порта/скоростей.
 
 ### turtlebro_py
 
