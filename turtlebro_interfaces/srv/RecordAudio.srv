@@ -1,0 +1,7 @@
+float32 duration
+string filename
+string device
+---
+bool success
+string filepath
+string message

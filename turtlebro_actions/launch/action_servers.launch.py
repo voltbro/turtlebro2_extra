@@ -33,5 +33,19 @@ def generate_launch_description() -> LaunchDescription:
                 output='log',
                 respawn=True,
             ),
+            Node(
+                package='turtlebro_actions',
+                executable='photo_service',
+                name='photo_service',
+                output='log',
+                respawn=True,
+            ),
+            Node(
+                package='turtlebro_actions',
+                executable='audio_service',
+                name='record_audio_service',
+                output='log',
+                respawn=True,
+            ),
         ]
     )
