@@ -18,7 +18,7 @@ from .examples.move_client import MoveClient
 from .examples.rotate_client import RotateClient
 from .examples.servo_client import ServoClient
 from .examples.video_client import VideoClient
-from .servers.audio_service import RecordAudioService
+from .servers.record_audio_service import RecordAudioService
 from .servers.move_server import MoveServer
 from .servers.photo_service import PhotoService
 from .servers.rotate_server import RotateServer

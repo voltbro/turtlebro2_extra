@@ -1,0 +1,6 @@
+string filename
+bool blocking
+string device
+---
+bool success
+string message

@@ -13,7 +13,6 @@
 # limitations under the License.
 #
 import math
-import subprocess
 import threading
 import time
 from typing import Any, Callable, Dict, Optional, Tuple
@@ -37,7 +36,7 @@ from tf_transformations import (
     quaternion_from_euler,
 )
 from turtlebro_interfaces.action import Move, Rotation
-from turtlebro_interfaces.srv import Photo, RecordAudio
+from turtlebro_interfaces.srv import Photo, PlayAudio, RecordAudio
 
 try:
     from turtlebro_speech.srv import Speech
@@ -226,8 +225,8 @@ class TurtleBro:
     def say(self, text='Привет'):
         self.u.say(text)
 
-    def play(self, filename):
-        self.u.play(filename)
+    def play(self, filename, *, blocking=False, device=''):
+        return self.u.play(filename, blocking=blocking, device=device)
 
     def distance(self, angle=0):
         return self.u.distance(angle)
@@ -464,6 +463,7 @@ class Utility:
         if Speech is not None:
             self.speech_client = self._node.create_client(Speech, 'festival_speech')
         self._photo_client = self._node.create_client(Photo, 'get_photo')
+        self._play_client = self._node.create_client(PlayAudio, 'play_audio')
 
         time_counter = 0.0
         time_to_wait = 3.0
@@ -597,9 +597,29 @@ class Utility:
         rclpy.spin_until_future_complete(self._node, future, timeout_sec=5.0)
 
     # Воспроизведение файла
-    def play(self, filename):
+    def play(self, filename, *, blocking=False, device=''):
         assert filename, 'Файл для воспроизведения не задан'
-        subprocess.Popen(['aplay', f'/home/pi/{filename}'])
+        request = PlayAudio.Request()
+        request.filename = filename
+        request.blocking = bool(blocking)
+        request.device = device or ''
+
+        if not self._play_client.wait_for_service(timeout_sec=1.0):
+            raise RuntimeError('Сервис play_audio недоступен')
+
+        timeout = 30.0 if blocking else 5.0
+        future = self._play_client.call_async(request)
+        rclpy.spin_until_future_complete(self._node, future, timeout_sec=timeout)
+
+        if not future.done():
+            raise TimeoutError('Сервис play_audio не ответил вовремя')
+
+        response = future.result()
+        if response is None:
+            raise RuntimeError('Сервис play_audio вернул пустой ответ')
+        if not response.success:
+            raise RuntimeError(response.message or 'Ошибка воспроизведения аудио')
+        return response.message
 
     @staticmethod
     def __clamp(min_val, value, max_val):

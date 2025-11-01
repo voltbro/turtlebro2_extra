@@ -42,8 +42,15 @@ def generate_launch_description() -> LaunchDescription:
             ),
             Node(
                 package='turtlebro_actions',
-                executable='audio_service.py',
+                executable='record_audio_service.py',
                 name='record_audio_service',
+                output='log',
+                respawn=True,
+            ),
+            Node(
+                package='turtlebro_actions',
+                executable='play_audio_service.py',
+                name='play_audio_service',
                 output='log',
                 respawn=True,
             ),

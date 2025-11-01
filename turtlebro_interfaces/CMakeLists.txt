@@ -16,6 +16,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
     "action/Rotation.action"
     "srv/Photo.srv"
     "srv/RecordAudio.srv"
+    "srv/PlayAudio.srv"
     DEPENDENCIES std_msgs sensor_msgs
 )
 
