@@ -15,7 +15,8 @@
 import math
 import threading
 import time
-from typing import Any, Callable, Dict, Optional, Tuple
+from collections.abc import Mapping as MappingABC, Sequence as SequenceABC
+from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
 
 from action_msgs.msg import GoalStatus
 import cv2
@@ -30,13 +31,14 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.task import Future
 from sensor_msgs.msg import CompressedImage, LaserScan
-from std_msgs.msg import Float32MultiArray, Int16
+from std_msgs.msg import ColorRGBA, Float32MultiArray, Int16
 from tf_transformations import (
     euler_from_quaternion,
     quaternion_from_euler,
 )
 from turtlebro_interfaces.action import Move, Rotation
-from turtlebro_interfaces.srv import Photo, PlayAudio, RecordAudio
+from turtlebro_interfaces.msg import ColorRGBAArray
+from turtlebro_interfaces.srv import Photo, RecordAudio
 
 try:
     from turtlebro_speech.srv import Speech
@@ -44,6 +46,27 @@ except ImportError:  # pragma: no cover - optional dependency on robot image
     Speech = None  # type: ignore[assignment]
 
 DEBUG = 1  # Включение/отключение отладочной печати
+
+LEGACY_LED_COLOR_IDS = {
+    'red': 1,
+    'green': 2,
+    'blue': 3,
+    'yellow': 4,
+    'white': 5,
+    'off': 6,
+}
+
+NAMED_LED_COLORS = {
+    'red': (1.0, 0.0, 0.0, 1.0),
+    'green': (0.0, 1.0, 0.0, 1.0),
+    'blue': (0.0, 0.0, 1.0, 1.0),
+    'yellow': (1.0, 1.0, 0.0, 1.0),
+    'white': (1.0, 1.0, 1.0, 1.0),
+    'off': (0.0, 0.0, 0.0, 0.0),
+}
+
+ColorValue = Union[str, Sequence[float], ColorRGBA]
+ColorArrayValue = Union[ColorRGBAArray, Sequence[ColorValue], Dict[int, ColorValue]]
 
 
 def _ensure_rclpy():
@@ -164,6 +187,17 @@ class TurtleBro:
 
     def color(self, col):
         self.u.color(col)
+
+    def backlight_all(self, color: ColorValue) -> None:
+        self.u.backlight_all(color)
+
+    def backlight_array(
+        self,
+        colors: ColorArrayValue,
+        *,
+        fill: Optional[ColorValue] = None,
+    ) -> None:
+        self.u.backlight_array(colors, fill=fill)
 
     def save_photo(self, name='robophoto'):
         self.u.photo(1, name)
@@ -459,6 +493,9 @@ class Utility:
             self._node.create_subscription(Int16, '/buttons', self.__subscriber_buttons_cb, 10)
         )
         self.colorpub = self._node.create_publisher(Int16, '/py_leds', 10)
+        self._backlight_all_pub = self._node.create_publisher(ColorRGBA, '/backlight/all', 10)
+        self._backlight_array_pub = self._node.create_publisher(ColorRGBAArray, '/backlight/array', 10)
+        self._led_strip_len = len(ColorRGBAArray().array)
         self.speech_client = None
         if Speech is not None:
             self.speech_client = self._node.create_client(Speech, 'festival_speech')
@@ -517,10 +554,53 @@ class Utility:
         assert isinstance(
             col, str
         ), 'Имя цвета должно быть: red, green, blue, yellow, white или off'
-        rgb = {'red': 1, 'green': 2, 'blue': 3, 'yellow': 4, 'white': 5, 'off': 6}
+        color_name = col.lower()
+        assert (
+            color_name in LEGACY_LED_COLOR_IDS
+        ), 'Имя цвета должно быть: red, green, blue, yellow, white или off'
         shade = Int16()
-        shade.data = int(rgb[col])
+        shade.data = int(LEGACY_LED_COLOR_IDS[color_name])
         self.colorpub.publish(shade)
+        self.backlight_all(color_name)
+
+    def backlight_all(self, color: ColorValue) -> None:
+        color_msg = self._prepare_color(color)
+        self._backlight_all_pub.publish(color_msg)
+
+    def backlight_array(
+        self,
+        colors: ColorArrayValue,
+        *,
+        fill: Optional[ColorValue] = None,
+    ) -> None:
+        if isinstance(colors, ColorRGBAArray):
+            if fill is not None:
+                raise ValueError('Параметр fill не используется, если передан готовый ColorRGBAArray')
+            msg = colors
+        else:
+            msg = ColorRGBAArray()
+            base_color = self._prepare_color(fill) if fill is not None else ColorRGBA()
+            for idx in range(self._led_strip_len):
+                msg.array[idx] = self._clone_color(base_color)
+
+            if isinstance(colors, MappingABC):
+                iterable = colors.items()
+            elif isinstance(colors, SequenceABC) and not isinstance(colors, (str, bytes, bytearray)):
+                iterable = enumerate(colors)
+            else:
+                raise TypeError(
+                    'colors должен быть ColorRGBAArray, последовательностью цветов или отображением индексов в цвета'
+                )
+
+            for idx, value in iterable:
+                idx_int = int(idx)
+                if idx_int < 0 or idx_int >= self._led_strip_len:
+                    raise ValueError(
+                        f'Индекс светодиода {idx_int} вне диапазона 0..{self._led_strip_len - 1}'
+                    )
+                msg.array[idx_int] = self._prepare_color(value)
+
+        self._backlight_array_pub.publish(msg)
 
     # Получение расстояния по лазеру
     def distance(self, angle):
@@ -620,6 +700,41 @@ class Utility:
         if not response.success:
             raise RuntimeError(response.message or 'Ошибка воспроизведения аудио')
         return response.message
+
+    def _prepare_color(self, color: ColorValue) -> ColorRGBA:
+        if isinstance(color, ColorRGBA):
+            return self._clone_color(color)
+        if isinstance(color, str):
+            color_name = color.lower()
+            if color_name not in NAMED_LED_COLORS:
+                raise ValueError(f"Неизвестное имя цвета '{color}'")
+            return self._create_color_message(*NAMED_LED_COLORS[color_name])
+        if isinstance(color, SequenceABC) and not isinstance(color, (str, bytes, bytearray)):
+            values = list(color)
+            if len(values) not in (3, 4):
+                raise ValueError('Цвет должен быть последовательностью из 3 (RGB) или 4 (RGBA) чисел')
+            r, g, b = (float(values[0]), float(values[1]), float(values[2]))
+            a = float(values[3]) if len(values) == 4 else 1.0
+            return self._create_color_message(
+                self.__clamp(0.0, r, 1.0),
+                self.__clamp(0.0, g, 1.0),
+                self.__clamp(0.0, b, 1.0),
+                self.__clamp(0.0, a, 1.0),
+            )
+        raise TypeError('Цвет должен быть строкой, сообщением ColorRGBA или последовательностью чисел')
+
+    @staticmethod
+    def _create_color_message(r: float, g: float, b: float, a: float) -> ColorRGBA:
+        msg = ColorRGBA()
+        msg.r = r
+        msg.g = g
+        msg.b = b
+        msg.a = a
+        return msg
+
+    @staticmethod
+    def _clone_color(color: ColorRGBA) -> ColorRGBA:
+        return Utility._create_color_message(color.r, color.g, color.b, color.a)
 
     @staticmethod
     def __clamp(min_val, value, max_val):

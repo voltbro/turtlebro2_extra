@@ -54,6 +54,8 @@ def test_turtlebro_exposes_expected_methods() -> None:
         'call',
         'wait',
         'color',
+        'backlight_all',
+        'backlight_array',
         'save_photo',
         'get_photo',
         'record',
