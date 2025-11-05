@@ -54,5 +54,12 @@ def generate_launch_description() -> LaunchDescription:
                 output='log',
                 respawn=True,
             ),
+            Node(
+                package='turtlebro_actions',
+                executable='text_to_speech_server.py',
+                name='text_to_speech_server',
+                output='log',
+                respawn=True,
+            ),
         ]
     )

@@ -28,6 +28,7 @@ set(ACTIONS_SERVERS
   turtlebro_actions/servers/move_server.py
   turtlebro_actions/servers/photo_service.py
   turtlebro_actions/servers/rotate_server.py
+  turtlebro_actions/servers/text_to_speech_server.py
 )
 
 set(EXAMPLE_CLIENTS
@@ -35,6 +36,7 @@ set(EXAMPLE_CLIENTS
   turtlebro_actions/examples/servo_client.py
   turtlebro_actions/examples/video_client.py
   turtlebro_actions/examples/rotate_client.py
+  turtlebro_actions/examples/text_to_speech_client.py
 )
 
 install(PROGRAMS

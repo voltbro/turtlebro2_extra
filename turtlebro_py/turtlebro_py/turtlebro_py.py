@@ -36,14 +36,9 @@ from tf_transformations import (
     euler_from_quaternion,
     quaternion_from_euler,
 )
-from turtlebro_interfaces.action import Move, Rotation
+from turtlebro_interfaces.action import Move, Rotation, TextToSpeech
 from turtlebro_interfaces.msg import ColorRGBAArray
-from turtlebro_interfaces.srv import Photo, RecordAudio
-
-try:
-    from turtlebro_speech.srv import Speech
-except ImportError:  # pragma: no cover - optional dependency on robot image
-    Speech = None  # type: ignore[assignment]
+from turtlebro_interfaces.srv import Photo, PlayAudio, RecordAudio
 
 DEBUG = 1  # Включение/отключение отладочной печати
 
@@ -121,18 +116,23 @@ class TurtleBro:
         self.init_position_on_start = Odometry()
         self.odom_has_started = False
 
-        self.u = Utility(self._node)  # Вспомогательные функции
-
         # Значения скорости
         self.linear_x_val = 0.09
         self.angular_z_val = 0.9
         self._action_timeout = 30.0
+
         self._move_client = ActionClient(self._node, Move, 'action_move')
         self._rotate_client = ActionClient(self._node, Rotation, 'action_rotate')
+        self._tts_client = ActionClient(self._node, TextToSpeech, 'text_to_speech')
+
         self.__wait_for_action_server(self._move_client, 'action_move')
         self.__wait_for_action_server(self._rotate_client, 'action_rotate')
+        self.__wait_for_action_server(self._tts_client, 'text_to_speech')
+
         self._record_client = self._node.create_client(RecordAudio, 'record_audio')
         self.__wait_for_service(self._record_client, 'record_audio')
+
+        self.u = Utility(self._node, tts_action_client=self._tts_client)  # Вспомогательные функции
 
         self.wait_for_odom_to_start()
 
@@ -256,8 +256,32 @@ class TurtleBro:
             raise RuntimeError(response.message or 'Ошибка записи аудио')
         return response.filepath
 
-    def say(self, text='Привет'):
-        self.u.say(text)
+    def say(
+        self,
+        text: str = 'Привет',
+        *,
+        voice: str = '',
+        rate: int = 0,
+        language: str = 'ru',
+        punctuation_mode: str = 'SOME',
+    ) -> str:
+        if not isinstance(text, str):
+            text = str(text)
+        goal = TextToSpeech.Goal()
+        goal.text = text
+        goal.voice = voice or ''
+        goal.rate = int(rate)
+        goal.language = language or ''
+        goal.punctuation_mode = punctuation_mode or ''
+
+        result = self.__send_action_goal(
+            self._tts_client,
+            goal,
+            goal_name='text_to_speech',
+        )
+        if not result.success:
+            raise RuntimeError(result.message or 'Ошибка синтеза речи')
+        return result.message
 
     def play(self, filename, *, blocking=False, device=''):
         return self.u.play(filename, blocking=blocking, device=device)
@@ -479,7 +503,7 @@ class TurtleNav(TurtleBro):
 class Utility:
     """Вспомогательный класс с сенсорами, светодиодами, камерой и звуком."""
 
-    def __init__(self, node: Node):
+    def __init__(self, node: Node, *, tts_action_client: Optional[ActionClient] = None):
         self._node = node
         self.scan = LaserScan()
         self.names_of_func_to_call: Dict[int, Callable[..., None]] = {}
@@ -496,11 +520,10 @@ class Utility:
         self._backlight_all_pub = self._node.create_publisher(ColorRGBA, '/backlight/all', 10)
         self._backlight_array_pub = self._node.create_publisher(ColorRGBAArray, '/backlight/array', 10)
         self._led_strip_len = len(ColorRGBAArray().array)
-        self.speech_client = None
-        if Speech is not None:
-            self.speech_client = self._node.create_client(Speech, 'festival_speech')
         self._photo_client = self._node.create_client(Photo, 'get_photo')
         self._play_client = self._node.create_client(PlayAudio, 'play_audio')
+        self._tts_client = tts_action_client or ActionClient(self._node, TextToSpeech, 'text_to_speech')
+        self._tts_result_timeout = 90.0
 
         time_counter = 0.0
         time_to_wait = 3.0
@@ -663,18 +686,58 @@ class Utility:
         return None
 
     # Произнесение текста
-    def say(self, text):
+    def say(
+        self,
+        text,
+        *,
+        voice: str = '',
+        rate: int = 0,
+        language: str = 'ru',
+        punctuation_mode: str = 'SOME',
+    ):
         if not isinstance(text, str):
             text = str(text)
-        if Speech is None or self.speech_client is None:
-            raise RuntimeError('Сервис озвучивания недоступен: turtlebro_speech не установлен')
-        while not self.speech_client.wait_for_service(timeout_sec=1.0):
-            if not rclpy.ok():
-                raise RuntimeError('Сервис озвучивания недоступен')
-        request = Speech.Request()
-        request.data = text
-        future = self.speech_client.call_async(request)
-        rclpy.spin_until_future_complete(self._node, future, timeout_sec=5.0)
+        if self._tts_client is None:
+            raise RuntimeError('Action text_to_speech недоступен')
+        if not self._tts_client.wait_for_server(timeout_sec=1.0):
+            raise RuntimeError('Action text_to_speech недоступен')
+
+        goal = TextToSpeech.Goal()
+        goal.text = text
+        goal.voice = voice or ''
+        goal.rate = int(rate)
+        goal.language = language or ''
+        goal.punctuation_mode = punctuation_mode or ''
+
+        send_future = self._tts_client.send_goal_async(goal)
+        rclpy.spin_until_future_complete(self._node, send_future, timeout_sec=5.0)
+
+        if not send_future.done():
+            raise TimeoutError('Не удалось отправить цель синтеза речи')
+
+        goal_handle = send_future.result()
+        if goal_handle is None or not goal_handle.accepted:
+            raise RuntimeError('Сервер синтеза речи отклонил цель')
+
+        result_future = goal_handle.get_result_async()
+        estimated = len(goal.text) / 8.0 + 5.0
+        timeout = min(self._tts_result_timeout, max(5.0, estimated))
+        rclpy.spin_until_future_complete(self._node, result_future, timeout_sec=timeout)
+
+        if not result_future.done():
+            cancel_future = goal_handle.cancel_goal_async()
+            rclpy.spin_until_future_complete(self._node, cancel_future, timeout_sec=1.0)
+            raise TimeoutError('Сервер синтеза речи не ответил вовремя')
+
+        goal_result = result_future.result()
+        if goal_result is None:
+            raise RuntimeError('Сервер синтеза речи вернул пустой ответ')
+        if goal_result.status != GoalStatus.STATUS_SUCCEEDED:
+            raise RuntimeError(f'Синтез речи завершился со статусом {goal_result.status}')
+        result = goal_result.result
+        if not result.success:
+            raise RuntimeError(result.message or 'Ошибка синтеза речи')
+        return result.message
 
     # Воспроизведение файла
     def play(self, filename, *, blocking=False, device=''):

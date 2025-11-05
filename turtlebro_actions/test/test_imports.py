@@ -27,6 +27,7 @@ MODULES = [
     "turtlebro_actions.servers",
     "turtlebro_actions.examples",
     "turtlebro_actions.examples.move_client",
+    "turtlebro_actions.examples.text_to_speech_client",
     "turtlebro_actions.examples.rotate_client",
     "turtlebro_actions.examples.servo_client",
     "turtlebro_actions.examples.video_client",
@@ -35,6 +36,7 @@ MODULES = [
     "turtlebro_actions.servers.rotate_server",
     "turtlebro_actions.servers.move_server",
     "turtlebro_actions.servers.photo_service",
+    "turtlebro_actions.servers.text_to_speech_server",
 ]
 
 

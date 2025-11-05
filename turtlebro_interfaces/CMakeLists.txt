@@ -15,6 +15,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
     "msg/ColorRGBAArray.msg"
     "action/Move.action"
     "action/Rotation.action"
+    "action/TextToSpeech.action"
     "srv/Photo.srv"
     "srv/RecordAudio.srv"
     "srv/PlayAudio.srv"

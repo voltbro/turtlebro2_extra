@@ -1,0 +1,13 @@
+# Goal definition
+string text               # Text to synthesize
+string voice              # Optional voice name, empty for default
+int32 rate                # Relative rate adjustment, 0 for default
+string language           # BCP47 language code, empty for default
+string punctuation_mode   # Punctuation handling mode (NONE/SOME/ALL), empty for default
+---
+# Result definition
+bool success              # Indicates whether speech synthesis was scheduled
+string message            # Additional details or error description
+---
+# Feedback definition
+string state              # High-level state message (e.g. "speaking", "completed")

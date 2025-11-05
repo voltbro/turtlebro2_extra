@@ -22,6 +22,7 @@ from .servers.record_audio_service import RecordAudioService
 from .servers.move_server import MoveServer
 from .servers.photo_service import PhotoService
 from .servers.rotate_server import RotateServer
+from .servers.text_to_speech_server import TextToSpeechServer
 
 __all__ = [
     "RecordAudioService",
@@ -30,6 +31,7 @@ __all__ = [
     "PhotoService",
     "RotateClient",
     "RotateServer",
+    "TextToSpeechServer",
     "ServoClient",
     "VideoClient",
 ]

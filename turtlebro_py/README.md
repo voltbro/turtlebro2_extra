@@ -144,6 +144,22 @@ tb.play("alarm", blocking=True, device="hw:1,0")
 tb.say("Однажды в студёную зимнюю пору...") #Робот воспроизведет фрагмент стихотворения Н.А.Некрасова
 ```
 
+Под капотом `say` отправляет Action `text_to_speech` в пакет `turtlebro_actions`, который озвучивает текст через RHVoice (speech-dispatcher). Убедитесь, что запущен лаунч `ros2 launch turtlebro_actions action_servers.launch.py`, установлены `python3-speechd`, `speech-dispatcher` и выбран голос RHVoice (например, `Vsevolod`).
+
+Через именованные аргументы можно выбирать голос, темп, язык и режим пунктуации:
+
+```
+tb.say(
+    "Проверка синтеза речи",
+    voice="Vsevolod",
+    rate=20,
+    language="ru",
+    punctuation_mode="SOME",
+)
+```
+
+`voice` — имя голоса из `speechd.list_synthesis_voices()`, `rate` — относительная скорость (0 оставляет настройку по умолчанию), `language` — код языка (например, `ru` или `en`), `punctuation_mode` — `NONE`, `SOME` или `ALL`.
+
 
 Для вызова написанной вами функции при нажатии на кнопку 24 используйте команду `call`:
 ```

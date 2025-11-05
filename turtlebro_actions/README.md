@@ -18,7 +18,24 @@ source install/setup.bash
 ros2 launch turtlebro_actions action_servers.launch.py
 ```
 
-Лаунч поднимает серверы движения (`MoveServer`) и поворота (`RotateServer`), сервис фотографирования (`PhotoService`), а также сервисы записи и воспроизведения звука (`RecordAudioService`, `PlayAudioService`).
+Лаунч поднимает серверы движения (`MoveServer`) и поворота (`RotateServer`), сервис фотографирования (`PhotoService`), сервисы записи и воспроизведения звука (`RecordAudioService`, `PlayAudioService`), а также Action-сервер синтеза речи (`TextToSpeechServer`) c использованием RHVoice через speech-dispatcher.
+
+## Синтез речи (RHVoice)
+
+- Зависимости: `python3-speechd` и `speech-dispatcher`. На роботе также должна быть установлена и настроена RHVoice (список голосов, язык по умолчанию и т.д.).
+- Action-сервер предоставляет действие `text_to_speech`. Цель включает текст, имя голоса, язык, скорость и режим произношения пунктуации (NONE/SOME/ALL).
+- Пример клиента: `ros2 run turtlebro_actions text_to_speech_client.py`. Можно передать собственный текст, отредактировав скрипт или создав свою ноду.
+- Для проверки доступных голосов выполните:
+
+  ```python
+  python3 - <<'PY'
+  import speechd
+  client = speechd.SSIPClient('voices_probe')
+  client.set_output_module('rhvoice')
+  print(client.list_synthesis_voices())
+  client.close()
+  PY
+  ```
 
 ## Структура Python-модулей
 

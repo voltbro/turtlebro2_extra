@@ -17,7 +17,7 @@ source install/setup.bash
 
 ### turtlebro_actions
 
-- `ros2 launch turtlebro_actions action_servers.launch.py` — поднимает action-серверы движения, поворота, фото- и аудиосервисы (запись и воспроизведение WAV).
+- `ros2 launch turtlebro_actions action_servers.launch.py` — поднимает action-серверы движения, поворота, фото-, аудио- и TTS-сервисы (RHVoice через speech-dispatcher).
 - Готовые Python-клиенты доступны в модулях `turtlebro_actions.examples.*`, серверы — в `turtlebro_actions.servers.*`.
 
 ### turtlebro_radio
