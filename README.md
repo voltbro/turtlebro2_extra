@@ -26,7 +26,7 @@ source install/setup.bash
 
 ### turtlebro_py
 
-Python-библиотека с классами `TurtleBro` и `TurtleNav`, обеспечивающими команды движения, работу с сенсорами, камерой и озвучкой.
+Python-библиотека с классами `TurtleBro` и `TurtleBroNav`, обеспечивающими команды движения, работу с сенсорами, камерой и озвучкой.
 
 ```python
 from turtlebro_py import TurtleBro

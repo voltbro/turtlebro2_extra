@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-from .turtlebro_py import TurtleBro, TurtleNav, Utility
+from .turtlebro_py import TurtleBro, Utility
+from .turtlebro_nav import TurtleBroNav
 
-__all__ = ['TurtleBro', 'TurtleNav', 'Utility']
+__all__ = ['TurtleBro', 'TurtleBroNav', 'Utility']

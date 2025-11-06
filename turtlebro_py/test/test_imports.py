@@ -19,6 +19,7 @@ import pytest
 MODULES = [
     'turtlebro_py',
     'turtlebro_py.turtlebro_py',
+    'turtlebro_py.turtlebro_nav',
 ]
 
 

@@ -21,7 +21,6 @@ from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
 from action_msgs.msg import GoalStatus
 import cv2
 from geometry_msgs.msg import Twist
-from nav2_msgs.action import NavigateToPose
 from nav_msgs.msg import Odometry
 import numpy as np
 import rclpy
@@ -32,10 +31,7 @@ from rclpy.node import Node
 from rclpy.task import Future
 from sensor_msgs.msg import CompressedImage, LaserScan
 from std_msgs.msg import ColorRGBA, Float32MultiArray, Int16
-from tf_transformations import (
-    euler_from_quaternion,
-    quaternion_from_euler,
-)
+from tf_transformations import euler_from_quaternion
 from turtlebro_interfaces.action import Move, Rotation, TextToSpeech
 from turtlebro_interfaces.msg import ColorRGBAArray
 from turtlebro_interfaces.srv import Photo, PlayAudio, RecordAudio
@@ -461,43 +457,6 @@ class TurtleBro:
         self.vel_pub.publish(vel)
         if DEBUG:
             print('Поворачиваю с угловой скоростью:', w, 'радиан/с')
-
-
-class TurtleNav(TurtleBro):
-    """Робот с поддержкой навигации через Nav2 (navigate_to_pose)."""
-
-    def __init__(self):
-        super().__init__()
-        self._nav_client = ActionClient(self._node, NavigateToPose, 'navigate_to_pose')
-
-    def __goal_message_assemble(self, x, y, theta):
-        goal = NavigateToPose.Goal()
-        goal.pose.header.frame_id = 'map'
-        goal.pose.header.stamp = self._node.get_clock().now().to_msg()
-        goal.pose.pose.position.x = float(x)
-        goal.pose.pose.position.y = float(y)
-
-        q = quaternion_from_euler(0, 0, math.radians(float(theta)))
-        goal.pose.pose.orientation.x = q[0]
-        goal.pose.pose.orientation.y = q[1]
-        goal.pose.pose.orientation.z = q[2]
-        goal.pose.pose.orientation.w = q[3]
-
-        return goal
-
-    def __goto(self, x, y, theta):
-        if not self._nav_client.wait_for_server(timeout_sec=5.0):
-            raise RuntimeError('Action-сервер NavigateToPose недоступен')
-
-        goal = self.__goal_message_assemble(x, y, theta)
-        send_future = self._nav_client.send_goal_async(goal)
-        rclpy.spin_until_future_complete(self._node, send_future)
-        goal_handle = send_future.result()
-        if goal_handle is None or not goal_handle.accepted:
-            raise RuntimeError('Цель NavigateToPose отклонена')
-
-        result_future = goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(self._node, result_future)
 
 
 class Utility:

@@ -28,6 +28,15 @@ def _require_turtlebro() -> type:
     return TurtleBro
 
 
+def _require_turtlebro_nav() -> type:
+    try:
+        import rclpy  # noqa: F401
+        from turtlebro_py import TurtleBroNav
+    except (ImportError, OSError) as exc:
+        pytest.skip(f'Пропуск тестов API turtlebro_py: {exc}')
+    return TurtleBroNav
+
+
 def _assert_has_members(cls: type, members: Iterable[str]) -> None:
     for name in members:
         assert hasattr(cls, name), (
@@ -82,3 +91,16 @@ def test_turtlebro_exposes_expected_properties() -> None:
     for name in properties:
         attr = getattr(TurtleBro, name)
         assert isinstance(attr, property), f"'{name}' должен быть объявлен как property"
+
+
+def test_turtlebro_nav_is_exposed_via_public_api() -> None:
+    TurtleBro = _require_turtlebro()
+    TurtleBroNav = _require_turtlebro_nav()
+
+    assert issubclass(TurtleBroNav, TurtleBro)
+    methods = (
+        'goto',
+        'say',
+    )
+    _assert_has_members(TurtleBroNav, methods)
+    _assert_methods_are_callable(TurtleBroNav, methods)
