@@ -20,33 +20,38 @@ from typing import Optional
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import UInt16
+from std_msgs.msg import Int16MultiArray
+
+SERVO_COMMAND_TOPIC = '/arduino/servos'
+SERVO_ANGLE_MIN = 0
+SERVO_ANGLE_MAX = 180
+SERVO_ANGLE_DEFAULT = 90
 
 
 class ServoClient:
-    """Обертка над топиком std_msgs/UInt16 для управления сервоприводом."""
+    """Обертка над топиком std_msgs/Int16MultiArray для управления сервоприводом."""
 
     def __init__(self, node: Node, servo: int) -> None:
         self._node = node
         self.servo = servo
-        topic = f'/servo{servo}'
-        self.pub = node.create_publisher(UInt16, topic, 10)
-        self._node.get_logger().info(f'Клиент сервопривода готов на топике {topic}')
+        self.pub = node.create_publisher(Int16MultiArray, SERVO_COMMAND_TOPIC, 10)
+        self._node.get_logger().info(
+            f'Клиент сервопривода готов на топике {SERVO_COMMAND_TOPIC} (D{self.servo})'
+        )
 
     def move_await(self, angle: int) -> None:
         self._node.get_logger().info(
-            f'Перемещение сервопривода {self.servo} к {angle} град. (ожидание подписчика)'
+            f'Угол {angle}° для сервопривода D{self.servo} (ожидание подписчика)'
         )
         while rclpy.ok() and self.pub.get_subscription_count() < 1:
             time.sleep(0.2)
         self.move(angle)
 
     def move(self, angle: int) -> None:
-        self._node.get_logger().info(
-            f'Перемещение сервопривода {self.servo} к {angle} град.'
-        )
-        msg = UInt16()
-        msg.data = int(angle)
+        clamped = self._clamp_angle(angle)
+        self._node.get_logger().info(f'Перемещение сервопривода D{self.servo} к {clamped}°')
+        msg = Int16MultiArray()
+        msg.data = [int(self.servo), clamped]
         self.pub.publish(msg)
         time.sleep(1.0)
 
@@ -54,16 +59,23 @@ class ServoClient:
         self._node.get_logger().info(f'Клиент сервопривода {self.servo} завершает работу')
         self._node.destroy_publisher(self.pub)
 
+    @staticmethod
+    def _clamp_angle(angle: int) -> int:
+        return max(SERVO_ANGLE_MIN, min(SERVO_ANGLE_MAX, int(angle)))
+
 
 def main(args: Optional[list[str]] = None) -> None:
     rclpy.init(args=args)
     node = Node('servo_client_node')
     try:
-        servo_num = 44
+        servo_num = 2
         if len(sys.argv) > 1:
             servo_num = int(sys.argv[1])
+        angle = SERVO_ANGLE_DEFAULT
+        if len(sys.argv) > 2:
+            angle = int(sys.argv[2])
         servo_client = ServoClient(node, servo_num)
-        servo_client.move_await(90)
+        servo_client.move_await(angle)
     except Exception as exc:  # noqa: BLE001
         node.get_logger().error(f'Сбой клиента сервопривода: {exc}')
     finally:

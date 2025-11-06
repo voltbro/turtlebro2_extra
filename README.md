@@ -9,7 +9,7 @@ mkdir -p ~/turtlebro_ws/src
 cd ~/turtlebro_ws/src
 git clone https://github.com/voltbro/turtlebro_extra
 cd ..
-colcon build --packages-select turtlebro_actions turtlebro_py turtlebro_radio
+colcon build --packages-select turtlebro_actions turtlebro_py
 source install/setup.bash
 ```
 
@@ -19,10 +19,6 @@ source install/setup.bash
 
 - `ros2 launch turtlebro_actions action_servers.launch.py` — поднимает action-серверы движения, поворота, фото-, аудио- и TTS-сервисы (RHVoice через speech-dispatcher).
 - Готовые Python-клиенты доступны в модулях `turtlebro_actions.examples.*`, серверы — в `turtlebro_actions.servers.*`.
-
-### turtlebro_radio
-
-- `ros2 launch turtlebro_radio radio.launch.py port:=/dev/ttyUSB0` — стартует радиомост и позволяет передать параметры порта/скоростей.
 
 ### turtlebro_py
 
@@ -37,6 +33,10 @@ tb.right(90)
 tb.save_photo("demo")
 tb.shutdown()
 ```
+
+### micro-ROS агент для платы Arduino
+
+- `ros2 launch turtlebro_py micro_ros_agent.launch.py dev:=/dev/ttyACM0 baud:=115200` — поднимает `micro_ros_agent`, который подключает перепрошитый контроллер TurtleBro к ROS 2 графу. При необходимости измените `dev`/`baud` или замените транспорт (например, `transport:=udp`).
 
 ## Настройка среды
 

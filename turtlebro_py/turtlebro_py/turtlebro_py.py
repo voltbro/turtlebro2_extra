@@ -169,7 +169,7 @@ class TurtleBro:
         self.__goto(x, y, theta)
 
     # Взаимодействие с Utility
-    def call(self, name, button=24, *args, **kwargs):
+    def call(self, name, button=28, *args, **kwargs):
         self.u.call(name, button, *args, **kwargs)
 
     def wait(self, duration):
@@ -503,7 +503,7 @@ class Utility:
             pass
 
     # Регистрация функций на кнопки
-    def call(self, name, button=24, *args, **kwargs):
+    def call(self, name, button=28, *args, **kwargs):
         self.names_of_func_to_call[button] = name
         self.args_of_func_to_call[button] = args
         self.kwargs_of_func_to_call[button] = kwargs
