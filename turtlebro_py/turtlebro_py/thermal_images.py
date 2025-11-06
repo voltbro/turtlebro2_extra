@@ -60,9 +60,9 @@ class ThermalImages:
             self.wait_for_frame(timeout=wait_timeout)
 
     def __del__(self):
-        self.shutdown()
+        self.__shutdown()
 
-    def shutdown(self) -> None:
+    def __shutdown(self) -> None:
         """Остановить поток исполнения и освободить ресурсы ROS."""
         executor = getattr(self, '_executor', None)
         node = getattr(self, '_node', None)
@@ -111,4 +111,3 @@ class ThermalImages:
             self._last_msg = msg
             self._has_frame = True
             self._condition.notify_all()
-

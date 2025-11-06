@@ -104,7 +104,7 @@ def test_turtlebro_exposes_expected_properties() -> None:
 def test_thermal_images_exposes_expected_api() -> None:
     ThermalImages = _require_thermal_images()
     properties = ('thermo_pixels', 'pixels')
-    methods = ('wait_for_frame', 'shutdown')
+    methods = ('wait_for_frame',)
 
     _assert_has_members(ThermalImages, properties)
     for name in properties:
