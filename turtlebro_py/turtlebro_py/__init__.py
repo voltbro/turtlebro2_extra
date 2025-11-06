@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+from .thermal_images import ThermalImages
 from .turtlebro_py import TurtleBro, Utility
 from .turtlebro_nav import TurtleBroNav
 
-__all__ = ['TurtleBro', 'TurtleBroNav', 'Utility']
+__all__ = ['TurtleBro', 'TurtleBroNav', 'ThermalImages', 'Utility']

@@ -37,6 +37,15 @@ def _require_turtlebro_nav() -> type:
     return TurtleBroNav
 
 
+def _require_thermal_images() -> type:
+    try:
+        import rclpy  # noqa: F401
+        from turtlebro_py import ThermalImages
+    except (ImportError, OSError) as exc:
+        pytest.skip(f'Пропуск тестов API turtlebro_py: {exc}')
+    return ThermalImages
+
+
 def _assert_has_members(cls: type, members: Iterable[str]) -> None:
     for name in members:
         assert hasattr(cls, name), (
@@ -84,13 +93,26 @@ def test_turtlebro_exposes_expected_properties() -> None:
     TurtleBro = _require_turtlebro()
     properties = (
         'coords',
-        'thermo_pixels',
     )
 
     _assert_has_members(TurtleBro, properties)
     for name in properties:
         attr = getattr(TurtleBro, name)
         assert isinstance(attr, property), f"'{name}' должен быть объявлен как property"
+
+
+def test_thermal_images_exposes_expected_api() -> None:
+    ThermalImages = _require_thermal_images()
+    properties = ('thermo_pixels', 'pixels')
+    methods = ('wait_for_frame', 'shutdown')
+
+    _assert_has_members(ThermalImages, properties)
+    for name in properties:
+        attr = getattr(ThermalImages, name)
+        assert isinstance(attr, property), f"'{name}' должен быть объявлен как property"
+
+    _assert_has_members(ThermalImages, methods)
+    _assert_methods_are_callable(ThermalImages, methods)
 
 
 def test_turtlebro_nav_is_exposed_via_public_api() -> None:

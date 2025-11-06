@@ -30,7 +30,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.task import Future
 from sensor_msgs.msg import CompressedImage, LaserScan
-from std_msgs.msg import ColorRGBA, Float32MultiArray, Int16
+from std_msgs.msg import ColorRGBA, Int16
 from tf_transformations import euler_from_quaternion
 from turtlebro_interfaces.action import Move, Rotation, TextToSpeech
 from turtlebro_interfaces.msg import ColorRGBAArray
@@ -99,16 +99,10 @@ class TurtleBro:
         self._subscriptions.append(
             self._node.create_subscription(Odometry, '/odom', self.__subscriber_odometry_cb, 10)
         )
-        self._subscriptions.append(
-            self._node.create_subscription(
-                Float32MultiArray, '/thermovisor', self.__subscriber_thermo_cb, 10
-            )
-        )
         self.vel_pub = self._node.create_publisher(Twist, '/cmd_vel', 10)
 
         # Начальные состояния
         self.odom = Odometry()
-        self.thermo = Float32MultiArray()
         self.init_position_on_start = Odometry()
         self.odom_has_started = False
 
@@ -213,10 +207,6 @@ class TurtleBro:
         theta = math.degrees(theta)
         return x, y, theta
 
-    @property
-    def thermo_pixels(self):
-        return self.thermo.data
-
     # Работа с камерой и звуком
     def get_photo(self):
         return self.u.photo(0, 'robophoto')
@@ -304,9 +294,6 @@ class TurtleBro:
         self.odom = msg
         if not self.odom_has_started:
             self.odom_has_started = True
-
-    def __subscriber_thermo_cb(self, msg):
-        self.thermo = msg
 
     # Основной метод движения через action
     def __move(self, meters):
