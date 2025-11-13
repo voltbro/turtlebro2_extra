@@ -30,6 +30,8 @@ MODULES = [
     "turtlebro_actions.examples.rotate_client",
     "turtlebro_actions.examples.servo_client",
     "turtlebro_actions.examples.video_client",
+    "turtlebro_actions.servers.record_audio_service",
+    "turtlebro_actions.servers.play_audio_service",
     "turtlebro_actions.servers.rotate_server",
     "turtlebro_actions.servers.move_server",
     "turtlebro_actions.servers.photo_service",

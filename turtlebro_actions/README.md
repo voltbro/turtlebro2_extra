@@ -18,7 +18,7 @@ source install/setup.bash
 ros2 launch turtlebro_actions action_servers.launch.py
 ```
 
-Лаунч поднимает серверы движения (`MoveServer`) и поворота (`RotateServer`), сервис фотографирования (`PhotoService`), а также сервис записи звука (`RecordAudioService`).
+Лаунч поднимает серверы движения (`MoveServer`) и поворота (`RotateServer`), сервис фотографирования (`PhotoService`), а также сервисы записи и воспроизведения звука (`RecordAudioService`, `PlayAudioService`).
 
 ## Структура Python-модулей
 
@@ -36,6 +36,7 @@ from turtlebro_actions import MoveClient, RotateServer
 
 - `PhotoService` предоставляет сервис `get_photo` и возвращает последнее сжатое изображение с фронтальной камеры.
 - `RecordAudioService` обслуживает сервис `record_audio` и записывает звук с ALSA-устройства (по умолчанию `hw:1,0`) через библиотеку `pyalsaaudio` в WAV-файл под `/home/pi`. Для работы требуется пакет `python3-alsaaudio`.
+- `PlayAudioService` обслуживает сервис `play_audio` и воспроизводит WAV-файлы посредством `pyalsaaudio`. По умолчанию файлы ищутся в `/home/pi`, каталог можно поменять параметром `base_path`.
 
 Параметры сервиса аудиозаписи:
 
@@ -52,6 +53,14 @@ print(alsaaudio.cards())
 print(alsaaudio.pcms(alsaaudio.PCM_CAPTURE))
 PY`
 
+Аналогично для устройства воспроизведения:
+
+- `aplay -l` — отобразит доступные ALSA-устройства вывода и их номера (`card X`, `device Y`), которые затем можно использовать как `hw:X,Y`;
+- Python: `python3 - <<'PY'
+import alsaaudio
+print(alsaaudio.pcms(alsaaudio.PCM_PLAYBACK))
+PY`
+
 Изменить устройство по умолчанию можно либо при вызове сервиса (`device: 'hw:2,0'`), либо через параметр узла: `ros2 param set /record_audio_service device hw:2,0`.
 
 Например, чтобы записать 5 секунд в WAV:
@@ -59,3 +68,15 @@ PY`
 ```
 ros2 service call /record_audio turtlebro_interfaces/srv/RecordAudio "{duration: 5.0, filename: 'lesson', device: ''}"
 ```
+
+### Воспроизведение WAV
+
+По умолчанию `PlayAudioService` ищет файлы в `/home/pi` и автоматически дополняет имя расширением `.wav`, если оно не указано. Устройство воспроизведения можно задать параметром `device` или напрямую в запросе.
+
+Запустить проигрывание в фоне:
+
+```
+ros2 service call /play_audio turtlebro_interfaces/srv/PlayAudio "{filename: 'alarm', blocking: false, device: ''}"
+```
+
+Чтобы дождаться завершения воспроизведения, установите `blocking: true` — сервис вернёт ответ после окончания проигрывания.
