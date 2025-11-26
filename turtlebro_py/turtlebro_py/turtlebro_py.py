@@ -13,7 +13,6 @@
 # limitations under the License.
 #
 import math
-import threading
 import time
 from collections.abc import Mapping as MappingABC, Sequence as SequenceABC
 from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
@@ -35,6 +34,7 @@ from tf_transformations import euler_from_quaternion
 from turtlebro_interfaces.action import Move, Rotation, TextToSpeech
 from turtlebro_interfaces.msg import ColorRGBAArray
 from turtlebro_interfaces.srv import Photo, PlayAudio, RecordAudio
+from ._ros_context import RosContextManaged
 
 DEBUG = 1  # Включение/отключение отладочной печати
 
@@ -60,11 +60,6 @@ ColorValue = Union[str, Sequence[float], ColorRGBA]
 ColorArrayValue = Union[ColorRGBAArray, Sequence[ColorValue], Dict[int, ColorValue]]
 
 
-def _ensure_rclpy():
-    if not rclpy.is_initialized():
-        rclpy.init()
-
-
 def _wait_for_message(node: Node, topic: str, msg_type: Any, timeout: Optional[float] = None):
     future: Future = Future()
 
@@ -83,17 +78,23 @@ def _wait_for_message(node: Node, topic: str, msg_type: Any, timeout: Optional[f
     return future.result()
 
 
-class TurtleBro:
+class TurtleBro(RosContextManaged):
     """Робот TurtleBro с управлением движением, светодиодами, камерой и звуком."""
 
-    def __init__(self):
-        self._owns_context = not rclpy.is_initialized()
-        _ensure_rclpy()
-        self._node = rclpy.create_node('tb_py')
-        self._executor = MultiThreadedExecutor()
-        self._executor.add_node(self._node)
-        self._spin_thread = threading.Thread(target=self._executor.spin, daemon=True)
-        self._spin_thread.start()
+    def __init__(
+        self,
+        *,
+        node: Optional[Node] = None,
+        executor: Optional[MultiThreadedExecutor] = None,
+        node_name: str = 'tb_py',
+        auto_spin_executor: bool = True,
+    ):
+        super().__init__(
+            node=node,
+            executor=executor,
+            node_name=node_name,
+            auto_spin_executor=auto_spin_executor,
+        )
 
         self._subscriptions = []
         self._subscriptions.append(
@@ -126,21 +127,49 @@ class TurtleBro:
 
         self.wait_for_odom_to_start()
 
-    def __del__(self):
-        self.__shutdown()
+    def close(self) -> None:
+        """Освободить ресурсы ROS и остановить исполнитель."""
+        super().close()
 
-    def __shutdown(self):
-        """Корректно завершить работу с ROS 2."""
+    def _on_close(self) -> None:
+        try:
+            if hasattr(self, 'vel_pub'):
+                self.vel_pub.publish(Twist())
+        except Exception:
+            pass
+
+        if hasattr(self, 'u'):
+            self.u.close()
+
+        for sub in getattr(self, '_subscriptions', []):
+            try:
+                self._node.destroy_subscription(sub)
+            except Exception:
+                pass
+        self._subscriptions = []
+
         if hasattr(self, 'vel_pub'):
-            self.vel_pub.publish(Twist())
-        if hasattr(self, '_executor'):
-            self._executor.shutdown()
-        if hasattr(self, '_spin_thread'):
-            self._spin_thread.join(timeout=1.0)
-        if hasattr(self, '_node') and self._node not in (None,):
-            self._node.destroy_node()
-        if self._owns_context and rclpy.ok():
-            rclpy.shutdown()
+            try:
+                self._node.destroy_publisher(self.vel_pub)
+            except Exception:
+                pass
+
+        for action_client in (
+            getattr(self, '_move_client', None),
+            getattr(self, '_rotate_client', None),
+            getattr(self, '_tts_client', None),
+        ):
+            if action_client is not None:
+                try:
+                    action_client.destroy()
+                except Exception:
+                    pass
+
+        if hasattr(self, '_record_client') and self._record_client is not None:
+            try:
+                self._node.destroy_client(self._record_client)
+            except Exception:
+                pass
 
     # Ожидание старта одометрии
     def wait_for_odom_to_start(self):
@@ -451,6 +480,7 @@ class Utility:
 
     def __init__(self, node: Node, *, tts_action_client: Optional[ActionClient] = None):
         self._node = node
+        self._closed = False
         self.scan = LaserScan()
         self.names_of_func_to_call: Dict[int, Callable[..., None]] = {}
         self.args_of_func_to_call: Dict[int, Tuple[Any, ...]] = {}
@@ -468,6 +498,7 @@ class Utility:
         self._led_strip_len = len(ColorRGBAArray().array)
         self._photo_client = self._node.create_client(Photo, 'get_photo')
         self._play_client = self._node.create_client(PlayAudio, 'play_audio')
+        self._owns_tts_client = tts_action_client is None
         self._tts_client = tts_action_client or ActionClient(self._node, TextToSpeech, 'text_to_speech')
         self._tts_result_timeout = 90.0
 
@@ -485,7 +516,50 @@ class Utility:
         print('Поехали!!!')
 
     def __del__(self):
-        self.color('blue')
+        if not getattr(self, '_closed', False):
+            try:
+                self.color('blue')
+            except Exception:
+                pass
+        self.close()
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        for sub in self._subscriptions:
+            try:
+                self._node.destroy_subscription(sub)
+            except Exception:
+                pass
+        self._subscriptions = []
+
+        for pub in (
+            getattr(self, 'colorpub', None),
+            getattr(self, '_backlight_all_pub', None),
+            getattr(self, '_backlight_array_pub', None),
+        ):
+            if pub is not None:
+                try:
+                    self._node.destroy_publisher(pub)
+                except Exception:
+                    pass
+
+        for client in (
+            getattr(self, '_photo_client', None),
+            getattr(self, '_play_client', None),
+        ):
+            if client is not None:
+                try:
+                    self._node.destroy_client(client)
+                except Exception:
+                    pass
+
+        if getattr(self, '_owns_tts_client', False) and getattr(self, '_tts_client', None) is not None:
+            try:
+                self._tts_client.destroy()
+            except Exception:
+                pass
 
     # Callback функции
     def __subscriber_scan_cb(self, msg):

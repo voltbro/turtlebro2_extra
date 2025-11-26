@@ -20,13 +20,13 @@ import threading
 import time
 from typing import Optional, Sequence
 
-import rclpy
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray
+from ._ros_context import RosContextManaged
 
 
-class ThermalImages:
+class ThermalImages(RosContextManaged):
     """Подписка на поток тепловизора TurtleBro через /thermovisor."""
 
     def __init__(
@@ -36,18 +36,19 @@ class ThermalImages:
         queue_size: int = 10,
         wait_for_first_frame: bool = False,
         wait_timeout: Optional[float] = None,
+        node: Optional[Node] = None,
+        executor: Optional[MultiThreadedExecutor] = None,
+        node_name: str = 'thermal_images',
+        auto_spin_executor: bool = True,
     ) -> None:
+        super().__init__(
+            node=node,
+            executor=executor,
+            node_name=node_name,
+            auto_spin_executor=auto_spin_executor,
+        )
+
         self._topic = topic
-        self._owns_context = not rclpy.is_initialized()
-        if self._owns_context:
-            rclpy.init()
-
-        self._node: Node = rclpy.create_node('thermal_images')
-        self._executor = MultiThreadedExecutor()
-        self._executor.add_node(self._node)
-        self._spin_thread = threading.Thread(target=self._executor.spin, daemon=True)
-        self._spin_thread.start()
-
         self._condition = threading.Condition()
         self._last_msg = Float32MultiArray()
         self._has_frame = False
@@ -59,23 +60,18 @@ class ThermalImages:
         if wait_for_first_frame:
             self.wait_for_frame(timeout=wait_timeout)
 
-    def __del__(self):
-        self.__shutdown()
-
-    def __shutdown(self) -> None:
+    def close(self) -> None:
         """Остановить поток исполнения и освободить ресурсы ROS."""
-        executor = getattr(self, '_executor', None)
-        node = getattr(self, '_node', None)
-        thread = getattr(self, '_spin_thread', None)
+        super().close()
 
-        if executor is not None:
-            executor.shutdown()
-        if thread is not None:
-            thread.join(timeout=1.0)
-        if node is not None:
-            node.destroy_node()
-        if self._owns_context and rclpy.ok():
-            rclpy.shutdown()
+    def _on_close(self) -> None:
+        subscription = getattr(self, '_subscription', None)
+        if subscription is not None:
+            try:
+                self._node.destroy_subscription(subscription)
+            except Exception:
+                pass
+            self._subscription = None
 
     def wait_for_frame(self, *, timeout: Optional[float] = None) -> Float32MultiArray:
         """

@@ -31,7 +31,6 @@ tb = TurtleBro()
 tb.forward(0.2)
 tb.right(90)
 tb.save_photo("demo")
-tb.shutdown()
 ```
 
 ### micro-ROS агент для платы Arduino
