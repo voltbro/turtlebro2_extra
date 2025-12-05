@@ -14,11 +14,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+import threading
 from typing import Optional
 
 import rclpy
 from rclpy.node import Node
 from rclpy.task import Future
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from sensor_msgs.msg import CompressedImage
 
 from turtlebro_interfaces.srv import Photo
@@ -29,44 +32,55 @@ class PhotoService(Node):
 
     def __init__(self) -> None:
         super().__init__('photo_service')
-        self._service = self.create_service(Photo, 'get_photo', self.handle_photo)
+        self._callback_group = ReentrantCallbackGroup()
+        self._last_image: Optional[CompressedImage] = None
+        self._image_event = threading.Event()
+
+        self._subscription = self.create_subscription(
+            CompressedImage,
+            '/front_camera/image_raw/compressed',
+            self._image_callback,
+            10,
+            callback_group=self._callback_group,
+        )
+
+        self._service = self.create_service(
+            Photo,
+            'get_photo',
+            self.handle_photo,
+            callback_group=self._callback_group,
+        )
         self.get_logger().info('Сервис получения фото готов')
 
+    def _image_callback(self, msg: CompressedImage) -> None:
+        self._last_image = msg
+        self._image_event.set()
+
     def handle_photo(self, request: Photo.Request, response: Photo.Response) -> Photo.Response:
-        try:
-            response.photo = self._wait_for_photo(
-                '/front_camera/image_raw/compressed', timeout=5.0
-            )
-        except TimeoutError as exc:
-            self.get_logger().error(str(exc))
+        timeout_sec = 5.0
+
+        if self._last_image is None:
+            if not self._image_event.wait(timeout=timeout_sec):
+                self.get_logger().error(
+                    'На топик /front_camera/image_raw/compressed не поступило изображение'
+                )
+                return response
+
+        response.photo = self._last_image
         return response
-
-    def _wait_for_photo(self, topic: str, timeout: Optional[float]) -> CompressedImage:
-        future: Future = Future()
-
-        def _callback(msg: CompressedImage) -> None:
-            if not future.done():
-                future.set_result(msg)
-
-        subscription = self.create_subscription(CompressedImage, topic, _callback, 10)
-        try:
-            rclpy.spin_until_future_complete(self, future, timeout_sec=timeout)
-        finally:
-            self.destroy_subscription(subscription)
-
-        if not future.done():
-            raise TimeoutError(f'На топик {topic} не поступило изображение')
-        return future.result()
 
 
 def main(args=None) -> None:
     rclpy.init(args=args)
     node = PhotoService()
+    executor = MultiThreadedExecutor()
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         node.get_logger().info('Сервис фото остановлен пользователем')
     finally:
+        executor.shutdown()
         node.destroy_node()
         rclpy.shutdown()
 

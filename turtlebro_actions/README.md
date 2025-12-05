@@ -52,18 +52,18 @@ from turtlebro_actions import MoveClient, RotateServer
 ## Фото и звук
 
 - `PhotoService` предоставляет сервис `get_photo` и возвращает последнее сжатое изображение с фронтальной камеры.
-- `RecordAudioService` обслуживает сервис `record_audio` и записывает звук с ALSA-устройства (по умолчанию `hw:1,0`) через библиотеку `pyalsaaudio` в WAV-файл под `/home/pi`. Для работы требуется пакет `python3-alsaaudio`.
+- `RecordAudioService` обслуживает сервис `record_audio` и записывает звук с ALSA-устройства (по умолчанию `plughw:0,0` — USB Audio Device) через библиотеку `pyalsaaudio` в WAV-файл под `/home/pi`. Для работы требуется пакет `python3-alsaaudio`.
 - `PlayAudioService` обслуживает сервис `play_audio` и воспроизводит WAV-файлы посредством `pyalsaaudio`. По умолчанию файлы ищутся в `/home/pi`, каталог можно поменять параметром `base_path`.
 
 Параметры сервиса аудиозаписи:
 
 - `duration` — длительность записи в секундах (> 0);
 - `filename` — базовое имя файла (расширение задаётся отдельно);
-- `device` — строковое имя ALSA-устройства (например, `hw:1,0`), необязательный параметр, по умолчанию берётся из параметра `device` узла.
+- `device` — строковое имя ALSA-устройства (например, `plughw:0,0`), необязательный параметр, по умолчанию берётся из параметра `device` узла.
 
 Чтобы подобрать идентификатор устройства записи, воспользуйтесь одной из утилит:
 
-- `arecord -l` — покажет физические устройства и их номера (`card X`, `device Y`), после чего можно сформировать строку `hw:X,Y`;
+- `arecord -l` — покажет физические устройства и их номера (`card X`, `device Y`), после чего можно сформировать строку `plughw:X,Y` или `hw:X,Y`;
 - Python: `python3 - <<'PY'
 import alsaaudio
 print(alsaaudio.cards())
@@ -78,7 +78,7 @@ import alsaaudio
 print(alsaaudio.pcms(alsaaudio.PCM_PLAYBACK))
 PY`
 
-Изменить устройство по умолчанию можно либо при вызове сервиса (`device: 'hw:2,0'`), либо через параметр узла: `ros2 param set /record_audio_service device hw:2,0`.
+Изменить устройство по умолчанию можно либо при вызове сервиса (`device: 'plughw:2,0'`), либо через параметр узла: `ros2 param set /record_audio_service device plughw:2,0`.
 
 Например, чтобы записать 5 секунд в WAV:
 
