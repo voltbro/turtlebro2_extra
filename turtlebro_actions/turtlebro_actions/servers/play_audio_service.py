@@ -130,7 +130,7 @@ class PlayAudioService(Node):
     def _playback_worker(self, filepath: Path, device_override: str) -> None:
         try:
             self._play_file(filepath, device_override=device_override)
-            self.get_logger().info('Воспроизведение %s завершено', filepath.name)
+            self.get_logger().info(f'Воспроизведение {filepath.name} завершено')
         except Exception:  # noqa: BLE001 - логирование фатальных ошибок в фоновом потоке
             self.get_logger().exception('Ошибка во время фонового воспроизведения %s', filepath)
         finally:

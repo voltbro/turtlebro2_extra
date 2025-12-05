@@ -80,7 +80,7 @@ class RotateServer(Node):
         prev_yaw = self._current_yaw()
         cmd = Twist()
         feedback = Rotation.Feedback()
-        rate = self.create_rate(40)
+        rate = rclpy.create_rate(40, self.get_clock())
 
         self.get_logger().info('Выполняю цель поворота')
 

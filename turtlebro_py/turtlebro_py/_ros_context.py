@@ -25,6 +25,17 @@ import rclpy
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 
+# Jazzy не содержит rclpy.utilities.is_initialized; вводим совместимый шорткат
+try:  # Foxy/Humble API
+    from rclpy.utilities import is_initialized as _is_initialized
+except ImportError:  # Jazzy: проверяем контекст вручную
+    def _is_initialized() -> bool:
+        try:
+            return rclpy.get_default_context().ok()
+        except Exception:
+            return False
+
+
 __all__ = ['acquire_ros_context', 'RosContextManaged']
 
 
@@ -52,7 +63,7 @@ class _RosContextManager:
 
     def acquire(self) -> _RosContextHandle:
         with self._lock:
-            if not rclpy.is_initialized():
+            if not _is_initialized():
                 rclpy.init()
                 self._owns_context = True
             self._refcount += 1
@@ -88,7 +99,7 @@ class RosContextManaged:
         node_name: str = 'ros_resource',
         auto_spin_executor: bool = True,
     ) -> None:
-        if node is not None and not rclpy.is_initialized():
+        if node is not None and not _is_initialized():
             raise RuntimeError(
                 f'rclpy.init() must be called before passing an existing node to {self.__class__.__name__}'
             )

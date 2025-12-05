@@ -174,6 +174,7 @@ class TurtleBro(RosContextManaged):
     # Ожидание старта одометрии
     def wait_for_odom_to_start(self):
         while not self.odom_has_started and rclpy.ok():
+            rclpy.spin_once(self._node, timeout_sec=0.1)
             time.sleep(0.05)
         self.init_position_on_start = self.odom
 
@@ -396,6 +397,9 @@ class TurtleBro(RosContextManaged):
         while rclpy.ok() and not future.done():
             if timeout and (time.perf_counter() - start_time) > timeout:
                 raise TimeoutError(f'{description} истек через {timeout:.1f} с')
+            # При внешнем узле без собственного executor обрабатываем колбэки вручную
+            if self._executor is None:
+                rclpy.spin_once(self._node, timeout_sec=0.05)
             time.sleep(0.01)
 
         if not future.done():
@@ -505,6 +509,7 @@ class Utility:
         time_counter = 0.0
         time_to_wait = 3.0
         while len(self.scan.ranges) <= 1 and rclpy.ok():
+            rclpy.spin_once(self._node, timeout_sec=0.1)
             time.sleep(0.1)
             time_counter += 0.1
             if time_counter > time_to_wait:
