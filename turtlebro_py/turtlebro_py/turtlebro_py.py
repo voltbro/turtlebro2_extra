@@ -123,7 +123,11 @@ class TurtleBro(RosContextManaged):
         self._record_client = self._node.create_client(RecordAudio, 'record_audio')
         self.__wait_for_service(self._record_client, 'record_audio')
 
-        self.u = Utility(self._node, tts_action_client=self._tts_client)  # Вспомогательные функции
+        self.u = Utility(
+            self._node,
+            tts_action_client=self._tts_client,
+            can_spin_once=self._should_spin_manually,
+        )  # Вспомогательные функции
 
         self.wait_for_odom_to_start()
 
@@ -174,29 +178,63 @@ class TurtleBro(RosContextManaged):
     # Ожидание старта одометрии
     def wait_for_odom_to_start(self):
         while not self.odom_has_started and rclpy.ok():
-            rclpy.spin_once(self._node, timeout_sec=0.1)
+            if self._should_spin_manually():
+                rclpy.spin_once(self._node, timeout_sec=0.1)
             time.sleep(0.05)
         self.init_position_on_start = self.odom
 
     # Основные команды движения
     def forward(self, meters):
-        assert meters > 0, 'Ошибка! Количество метров должно быть положительным'
-        self.__move(meters)
+        if not isinstance(meters, (int, float)) or meters <= 0:
+            self._node.get_logger().error('Ошибка! Количество метров должно быть положительным числом')
+            return False
+        try:
+            self.__move(meters)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            self._node.get_logger().error(f'Не удалось выполнить forward: {exc}')
+            return False
 
     def backward(self, meters):
-        assert meters > 0, 'Ошибка! Количество метров должно быть положительным'
-        self.__move(-meters)
+        if not isinstance(meters, (int, float)) or meters <= 0:
+            self._node.get_logger().error('Ошибка! Количество метров должно быть положительным числом')
+            return False
+        try:
+            self.__move(-meters)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            self._node.get_logger().error(f'Не удалось выполнить backward: {exc}')
+            return False
 
     def right(self, degrees):
-        assert degrees > 0, 'Ошибка! Количество градусов должно быть положительным'
-        self.__turn(-degrees)
+        if not isinstance(degrees, (int, float)) or degrees <= 0:
+            self._node.get_logger().error('Ошибка! Количество градусов должно быть положительным числом')
+            return False
+        try:
+            self.__turn(-degrees)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            self._node.get_logger().error(f'Не удалось выполнить right: {exc}')
+            return False
 
     def left(self, degrees):
-        assert degrees > 0, 'Ошибка! Количество градусов должно быть положительным'
-        self.__turn(degrees)
+        if not isinstance(degrees, (int, float)) or degrees <= 0:
+            self._node.get_logger().error('Ошибка! Количество градусов должно быть положительным числом')
+            return False
+        try:
+            self.__turn(degrees)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            self._node.get_logger().error(f'Не удалось выполнить left: {exc}')
+            return False
 
     def goto(self, x, y, theta=0):
-        self.__goto(x, y, theta)
+        try:
+            self.__goto(x, y, theta)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            self._node.get_logger().error(f'Не удалось выполнить goto: {exc}')
+            return False
 
     # Взаимодействие с Utility
     def call(self, name, button=28, *args, **kwargs):
@@ -260,10 +298,7 @@ class TurtleBro(RosContextManaged):
 
         timeout = max(timeval + 2.0, 5.0)
         future = self._record_client.call_async(request)
-        rclpy.spin_until_future_complete(self._node, future, timeout_sec=timeout)
-
-        if not future.done():
-            raise TimeoutError('Сервис record_audio не ответил вовремя')
+        self.__wait_for_future(future, timeout, 'record_audio response')
 
         response = future.result()
         if response is None:
@@ -397,8 +432,8 @@ class TurtleBro(RosContextManaged):
         while rclpy.ok() and not future.done():
             if timeout and (time.perf_counter() - start_time) > timeout:
                 raise TimeoutError(f'{description} истек через {timeout:.1f} с')
-            # При внешнем узле без собственного executor обрабатываем колбэки вручную
-            if self._executor is None:
+            # Ручной spin допустим только когда нет активного фонового spin-потока.
+            if self._should_spin_manually():
                 rclpy.spin_once(self._node, timeout_sec=0.05)
             time.sleep(0.01)
 
@@ -411,6 +446,26 @@ class TurtleBro(RosContextManaged):
         if exception is not None:
             raise exception
         return future.result()
+
+    def _should_spin_manually(self) -> bool:
+        if self._executor is None:
+            return True
+
+        if getattr(self, '_external_node', False) or getattr(self, '_external_executor', False):
+            return False
+
+        spin_thread = getattr(self, '_spin_thread', None)
+        if spin_thread is None:
+            return True
+        return not spin_thread.is_alive()
+
+    def _wait_for_future(
+        self,
+        future: Future,
+        timeout: float,
+        description: str,
+    ):
+        return self.__wait_for_future(future, timeout, description)
 
     def __wait_for_action_server(self, client: ActionClient, name: str, timeout: float = 5.0):
         if not client.wait_for_server(timeout_sec=timeout):
@@ -482,9 +537,16 @@ class TurtleBro(RosContextManaged):
 class Utility:
     """Вспомогательный класс с сенсорами, светодиодами, камерой и звуком."""
 
-    def __init__(self, node: Node, *, tts_action_client: Optional[ActionClient] = None):
+    def __init__(
+        self,
+        node: Node,
+        *,
+        tts_action_client: Optional[ActionClient] = None,
+        can_spin_once: Optional[Callable[[], bool]] = None,
+    ):
         self._node = node
         self._closed = False
+        self._can_spin_once = can_spin_once
         self.scan = LaserScan()
         self.names_of_func_to_call: Dict[int, Callable[..., None]] = {}
         self.args_of_func_to_call: Dict[int, Tuple[Any, ...]] = {}
@@ -509,7 +571,8 @@ class Utility:
         time_counter = 0.0
         time_to_wait = 3.0
         while len(self.scan.ranges) <= 1 and rclpy.ok():
-            rclpy.spin_once(self._node, timeout_sec=0.1)
+            if self._can_spin_once is None or self._can_spin_once():
+                rclpy.spin_once(self._node, timeout_sec=0.1)
             time.sleep(0.1)
             time_counter += 0.1
             if time_counter > time_to_wait:
@@ -565,6 +628,30 @@ class Utility:
                 self._tts_client.destroy()
             except Exception:
                 pass
+
+    def _wait_for_future(
+        self,
+        future: Future,
+        timeout: float,
+        description: str,
+    ):
+        start_time = time.perf_counter()
+        while rclpy.ok() and not future.done():
+            if timeout and (time.perf_counter() - start_time) > timeout:
+                raise TimeoutError(f'{description} истек через {timeout:.1f} с')
+            if self._can_spin_once is None or self._can_spin_once():
+                rclpy.spin_once(self._node, timeout_sec=0.05)
+            time.sleep(0.01)
+
+        if not future.done():
+            raise RuntimeError(f'{description} не завершился из-за остановки ROS')
+        if future.cancelled():
+            raise RuntimeError(f'{description} был отменен')
+
+        exception = future.exception()
+        if exception is not None:
+            raise exception
+        return future.result()
 
     # Callback функции
     def __subscriber_scan_cb(self, msg):
@@ -684,10 +771,7 @@ class Utility:
 
             request = Photo.Request()
             future = self._photo_client.call_async(request)
-            rclpy.spin_until_future_complete(self._node, future, timeout_sec=5.0)
-
-            if not future.done():
-                raise TimeoutError('Сервис get_photo не ответил вовремя')
+            self._wait_for_future(future, 5.0, 'get_photo response')
 
             response = future.result()
             if response is None:
@@ -735,10 +819,7 @@ class Utility:
         goal.punctuation_mode = punctuation_mode or ''
 
         send_future = self._tts_client.send_goal_async(goal)
-        rclpy.spin_until_future_complete(self._node, send_future, timeout_sec=5.0)
-
-        if not send_future.done():
-            raise TimeoutError('Не удалось отправить цель синтеза речи')
+        self._wait_for_future(send_future, 5.0, 'text_to_speech send goal')
 
         goal_handle = send_future.result()
         if goal_handle is None or not goal_handle.accepted:
@@ -747,12 +828,15 @@ class Utility:
         result_future = goal_handle.get_result_async()
         estimated = len(goal.text) / 8.0 + 5.0
         timeout = min(self._tts_result_timeout, max(5.0, estimated))
-        rclpy.spin_until_future_complete(self._node, result_future, timeout_sec=timeout)
-
-        if not result_future.done():
+        try:
+            self._wait_for_future(result_future, timeout, 'text_to_speech result')
+        except TimeoutError as exc:
             cancel_future = goal_handle.cancel_goal_async()
-            rclpy.spin_until_future_complete(self._node, cancel_future, timeout_sec=1.0)
-            raise TimeoutError('Сервер синтеза речи не ответил вовремя')
+            try:
+                self._wait_for_future(cancel_future, 1.0, 'text_to_speech cancel')
+            except Exception:  # noqa: BLE001
+                pass
+            raise TimeoutError('Сервер синтеза речи не ответил вовремя') from exc
 
         goal_result = result_future.result()
         if goal_result is None:
@@ -777,10 +861,7 @@ class Utility:
 
         timeout = 30.0 if blocking else 5.0
         future = self._play_client.call_async(request)
-        rclpy.spin_until_future_complete(self._node, future, timeout_sec=timeout)
-
-        if not future.done():
-            raise TimeoutError('Сервис play_audio не ответил вовремя')
+        self._wait_for_future(future, timeout, 'play_audio response')
 
         response = future.result()
         if response is None:

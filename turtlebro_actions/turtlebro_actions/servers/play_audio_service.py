@@ -156,13 +156,16 @@ class PlayAudioService(Node):
             if sample_width != 2:
                 raise ValueError('Поддерживаются только WAV-файлы с глубиной 16 бит (s16le)')
 
-            pcm = alsaaudio.PCM(type=alsaaudio.PCM_PLAYBACK, mode=alsaaudio.PCM_NORMAL, device=device)
+            pcm = alsaaudio.PCM(
+                type=alsaaudio.PCM_PLAYBACK,
+                mode=alsaaudio.PCM_NORMAL,
+                device=device,
+                channels=channels,
+                rate=rate,
+                format=alsaaudio.PCM_FORMAT_S16_LE,
+                periodsize=period_size,
+            )
             try:
-                pcm.setchannels(channels)
-                pcm.setrate(rate)
-                pcm.setformat(alsaaudio.PCM_FORMAT_S16_LE)
-                pcm.setperiodsize(period_size)
-
                 data = wav_file.readframes(period_size)
                 while data:
                     pcm.write(data)
@@ -177,10 +180,17 @@ def main(args: Optional[list[str]] = None) -> None:
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
-        node.get_logger().info('Сервис воспроизведения аудио остановлен пользователем')
+        pass
     finally:
-        node.destroy_node()
-        rclpy.shutdown()
+        try:
+            node.destroy_node()
+        except Exception:
+            pass
+        try:
+            if rclpy.ok():
+                rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':

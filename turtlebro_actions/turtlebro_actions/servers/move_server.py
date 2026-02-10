@@ -264,12 +264,26 @@ def main(args=None) -> None:
     try:
         executor.spin()
     except KeyboardInterrupt:
-        node.get_logger().info('Сервер перемещения остановлен пользователем')
+        pass
     finally:
-        node.cmd_vel.publish(Twist())
-        executor.shutdown()
-        node.destroy_node()
-        rclpy.shutdown()
+        try:
+            if rclpy.ok():
+                node.cmd_vel.publish(Twist())
+        except Exception:
+            pass
+        try:
+            executor.shutdown()
+        except Exception:
+            pass
+        try:
+            node.destroy_node()
+        except Exception:
+            pass
+        try:
+            if rclpy.ok():
+                rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':

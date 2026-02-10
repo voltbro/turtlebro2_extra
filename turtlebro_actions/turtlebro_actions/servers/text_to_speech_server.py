@@ -122,7 +122,7 @@ class TextToSpeechServer(Node):
                 return result
 
             if not completed:
-                self.get_logger().warning('Таймаут ожидания окончания синтеза речи')
+                self.get_logger().debug('Таймаут ожидания окончания синтеза речи')
 
             feedback.state = 'completed'
             goal_handle.publish_feedback(feedback)
@@ -247,10 +247,17 @@ def main(args=None) -> None:
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
-        node.get_logger().info('Сервер синтеза речи остановлен пользователем')
+        pass
     finally:
-        node.destroy_node()
-        rclpy.shutdown()
+        try:
+            node.destroy_node()
+        except Exception:
+            pass
+        try:
+            if rclpy.ok():
+                rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':

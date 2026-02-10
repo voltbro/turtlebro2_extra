@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import math
 
-import rclpy
 from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionClient
 from tf_transformations import quaternion_from_euler
@@ -33,9 +32,14 @@ class TurtleBroNav(TurtleBro):
         super().__init__()
         self._nav_client = ActionClient(self._node, NavigateToPose, 'navigate_to_pose')
 
-    def goto(self, x: float, y: float, theta: float = 0) -> None:
+    def goto(self, x: float, y: float, theta: float = 0) -> bool:
         """Отправить цель навигации в плоскости карты."""
-        self.__goto(x, y, theta)
+        try:
+            self.__goto(x, y, theta)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            self._node.get_logger().error(f'Не удалось выполнить navigate goto: {exc}')
+            return False
 
     def __goal_message_assemble(self, x: float, y: float, theta: float) -> NavigateToPose.Goal:
         goal = NavigateToPose.Goal()
@@ -58,10 +62,10 @@ class TurtleBroNav(TurtleBro):
 
         goal = self.__goal_message_assemble(x, y, theta)
         send_future = self._nav_client.send_goal_async(goal)
-        rclpy.spin_until_future_complete(self._node, send_future)
+        self._wait_for_future(send_future, 30.0, 'navigate_to_pose send goal')
         goal_handle = send_future.result()
         if goal_handle is None or not goal_handle.accepted:
             raise RuntimeError('Цель NavigateToPose отклонена')
 
         result_future = goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(self._node, result_future)
+        self._wait_for_future(result_future, 300.0, 'navigate_to_pose result')
