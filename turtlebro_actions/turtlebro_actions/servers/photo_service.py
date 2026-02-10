@@ -78,11 +78,21 @@ def main(args=None) -> None:
     try:
         executor.spin()
     except KeyboardInterrupt:
-        node.get_logger().info('Сервис фото остановлен пользователем')
+        pass
     finally:
-        executor.shutdown()
-        node.destroy_node()
-        rclpy.shutdown()
+        try:
+            executor.shutdown()
+        except Exception:
+            pass
+        try:
+            node.destroy_node()
+        except Exception:
+            pass
+        try:
+            if rclpy.ok():
+                rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':

@@ -99,11 +99,6 @@ class RosContextManaged:
         node_name: str = 'ros_resource',
         auto_spin_executor: bool = True,
     ) -> None:
-        if node is not None and not _is_initialized():
-            raise RuntimeError(
-                f'rclpy.init() must be called before passing an existing node to {self.__class__.__name__}'
-            )
-
         self._external_node = node is not None
         self._external_executor = executor is not None
         self._node: Optional[Node] = node
@@ -113,6 +108,11 @@ class RosContextManaged:
         self._context_handle: Optional[_RosContextHandle] = None
         self._closed = False
         self._close_hook_registered = False
+
+        if node is not None and not _is_initialized():
+            raise RuntimeError(
+                f'rclpy.init() must be called before passing an existing node to {self.__class__.__name__}'
+            )
 
         if not self._external_node:
             self._context_handle = acquire_ros_context()
@@ -126,7 +126,7 @@ class RosContextManaged:
                 self._executor.add_node(self._node)
                 self._added_node_to_executor = True
                 if not self._external_executor and auto_spin_executor:
-                    self._spin_thread = threading.Thread(target=self._executor.spin, daemon=True)
+                    self._spin_thread = threading.Thread(target=self._spin_executor_worker, daemon=True)
                     self._spin_thread.start()
         else:
             self._executor = executor
@@ -155,30 +155,60 @@ class RosContextManaged:
     def _on_close(self) -> None:  # pragma: no cover - по умолчанию делать нечего
         """Переопределите в наследниках для освобождения собственных ресурсов."""
 
+    def _spin_executor_worker(self) -> None:
+        executor = getattr(self, '_executor', None)
+        if executor is None:
+            return
+        try:
+            executor.spin()
+        except Exception as exc:  # noqa: BLE001
+            if self._is_context_shutdown_spin_error(exc):
+                return
+            raise
+
+    @staticmethod
+    def _is_context_shutdown_spin_error(exc: BaseException) -> bool:
+        text = str(exc).lower()
+        markers = (
+            'context is not valid',
+            'rcl_shutdown() was called',
+            'rcl_shutdown was called',
+            'failed to initialize wait set',
+        )
+        return any(marker in text for marker in markers)
+
     def _teardown_ros(self) -> None:
-        if self._executor is not None and self._added_node_to_executor and self._node is not None:
+        executor = getattr(self, '_executor', None)
+        added_node_to_executor = getattr(self, '_added_node_to_executor', False)
+        node = getattr(self, '_node', None)
+        external_executor = getattr(self, '_external_executor', False)
+        spin_thread = getattr(self, '_spin_thread', None)
+        external_node = getattr(self, '_external_node', False)
+        context_handle = getattr(self, '_context_handle', None)
+
+        if executor is not None and added_node_to_executor and node is not None:
             try:
-                self._executor.remove_node(self._node)
+                executor.remove_node(node)
             except Exception:
                 pass
 
-        if self._executor is not None and not self._external_executor:
+        if executor is not None and not external_executor:
             try:
-                self._executor.shutdown()
+                executor.shutdown()
             except Exception:
                 pass
 
-        if self._spin_thread is not None:
-            self._spin_thread.join(timeout=1.0)
+        if spin_thread is not None:
+            spin_thread.join(timeout=1.0)
 
-        if not self._external_node and self._node is not None:
+        if not external_node and node is not None:
             try:
-                self._node.destroy_node()
+                node.destroy_node()
             except Exception:
                 pass
 
-        if getattr(self, '_context_handle', None) is not None:
-            self._context_handle.release()
+        if context_handle is not None:
+            context_handle.release()
             self._context_handle = None
 
     def _register_close_hook(self) -> None:
