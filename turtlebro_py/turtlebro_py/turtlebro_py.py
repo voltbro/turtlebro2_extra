@@ -228,12 +228,23 @@ class TurtleBro(RosContextManaged):
             self._node.get_logger().error(f'Не удалось выполнить left: {exc}')
             return False
 
-    def goto(self, x, y, theta=0):
+    def goto(self, x, y):
         try:
-            self.__goto(x, y, theta)
+            self.__goto(x, y)
             return True
         except Exception as exc:  # noqa: BLE001
             self._node.get_logger().error(f'Не удалось выполнить goto: {exc}')
+            return False
+
+    def turn(self, degrees):
+        if not isinstance(degrees, (int, float)):
+            self._node.get_logger().error('Ошибка! Угол должен быть числом')
+            return False
+        try:
+            self.__turn(degrees)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            self._node.get_logger().error(f'Не удалось выполнить turn: {exc}')
             return False
 
     # Взаимодействие с Utility
@@ -260,9 +271,9 @@ class TurtleBro(RosContextManaged):
     def save_photo(self, name='robophoto'):
         self.u.photo(1, name)
 
-    # Свойства для получения координат и данных с тепловизора
+    # Свойства для получения позы и данных с тепловизора
     @property
-    def coords(self):
+    def pose(self):
         angle_q = [
             self.odom.pose.pose.orientation.x,
             self.odom.pose.pose.orientation.y,
@@ -380,13 +391,13 @@ class TurtleBro(RosContextManaged):
         return result.result
 
     # Навигация к точке
-    def __goto(self, x, y, theta):
+    def __goto(self, x, y):
         heading = self.__get_turn_angle_to_point(x, y)
         distance = self.__get_distance_to_point(x, y)
         if DEBUG:
             print('поворот на:', heading)
             print('вперед на:', distance)
-        self.__turn(math.degrees(heading))
+        self.__turn(heading)
         self.__move(distance)
 
     def __send_action_goal(
@@ -507,8 +518,11 @@ class TurtleBro(RosContextManaged):
             self.odom.pose.pose.orientation.w,
         ]
         (_, _, yaw) = euler_from_quaternion(angle_q)
-        heading = -math.atan2(y, x)
-        angle_to_turn = yaw - heading
+        heading = math.atan2(
+            y - self.odom.pose.pose.position.y,
+            x - self.odom.pose.pose.position.x,
+        )
+        angle_to_turn = math.degrees(heading - yaw)
         return angle_to_turn
 
     def __get_distance_to_point(self, x, y):

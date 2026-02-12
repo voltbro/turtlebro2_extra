@@ -14,6 +14,9 @@
 #
 """Регрессионные тесты публичного API для turtlebro_py."""
 
+import inspect
+import math
+from types import SimpleNamespace
 from typing import Iterable
 
 import pytest
@@ -68,6 +71,7 @@ def test_turtlebro_exposes_expected_methods() -> None:
         'backward',
         'left',
         'right',
+        'turn',
         'goto',
         'call',
         'wait',
@@ -92,13 +96,45 @@ def test_turtlebro_exposes_expected_methods() -> None:
 def test_turtlebro_exposes_expected_properties() -> None:
     TurtleBro = _require_turtlebro()
     properties = (
-        'coords',
+        'pose',
     )
 
     _assert_has_members(TurtleBro, properties)
     for name in properties:
         attr = getattr(TurtleBro, name)
         assert isinstance(attr, property), f"'{name}' должен быть объявлен как property"
+
+
+def test_turtlebro_goto_signature_uses_x_y_only() -> None:
+    TurtleBro = _require_turtlebro()
+    signature = inspect.signature(TurtleBro.goto)
+    params = list(signature.parameters.values())
+    names = [param.name for param in params]
+    assert names == ['self', 'x', 'y']
+
+
+def _fake_odom(x: float, y: float, yaw_deg: float):
+    yaw_rad = math.radians(yaw_deg)
+    half = yaw_rad / 2.0
+    orientation = SimpleNamespace(
+        x=0.0,
+        y=0.0,
+        z=math.sin(half),
+        w=math.cos(half),
+    )
+    position = SimpleNamespace(x=x, y=y)
+    pose = SimpleNamespace(position=position, orientation=orientation)
+    return SimpleNamespace(pose=SimpleNamespace(pose=pose))
+
+
+def test_get_turn_angle_to_point_is_relative_to_current_pose() -> None:
+    TurtleBro = _require_turtlebro()
+
+    tb = object.__new__(TurtleBro)
+    tb.odom = _fake_odom(1.0, 1.0, 30.0)
+
+    turn_angle = TurtleBro._TurtleBro__get_turn_angle_to_point(tb, 2.0, 1.0)
+    assert turn_angle == pytest.approx(-30.0, abs=1e-3)
 
 
 def test_thermal_images_exposes_expected_api() -> None:
