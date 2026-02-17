@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import Optional
 
@@ -40,6 +41,8 @@ class TextToSpeechServer(Node):
     def __init__(self) -> None:
         super().__init__('text_to_speech_server')
         self._speech_client: Optional['speechd.SSIPClient'] = None
+        self._active_goal_lock = threading.Lock()
+        self._active_goal_handle = None
 
         self._action_server = ActionServer(
             self,
@@ -85,7 +88,10 @@ class TextToSpeechServer(Node):
             self._init_speech_client()
 
     def goal_callback(self, goal_request: TextToSpeech.Goal) -> GoalResponse:
-        self._ensure_speech_client()
+        with self._active_goal_lock:
+            if self._active_goal_handle is not None:
+                self.get_logger().warning('Уже выполняется синтез речи, отклоняю новую цель')
+                return GoalResponse.REJECT
         if self._speech_client is None:
             self.get_logger().error('Запрос синтеза отклонен: speech-dispatcher недоступен')
             return GoalResponse.REJECT
@@ -95,8 +101,15 @@ class TextToSpeechServer(Node):
         return GoalResponse.ACCEPT
 
     def cancel_callback(self, goal_handle) -> CancelResponse:
+        with self._active_goal_lock:
+            active_goal_handle = self._active_goal_handle
+        if active_goal_handle is not None and active_goal_handle is not goal_handle:
+            self.get_logger().warning('Запрос отмены синтеза отклонен: активна другая цель')
+            return CancelResponse.REJECT
+
         self.get_logger().info('Получен запрос на отмену синтеза речи')
-        self._stop_synthesis()
+        if active_goal_handle is not None:
+            self._stop_synthesis()
         return CancelResponse.ACCEPT
 
     def execute_callback(self, goal_handle):
@@ -105,47 +118,53 @@ class TextToSpeechServer(Node):
 
         result = TextToSpeech.Result()
         feedback = TextToSpeech.Feedback()
-
-        if self._speech_client is None:
-            result.success = False
-            result.message = 'speech-dispatcher недоступен'
-            goal_handle.abort()
-            return result
+        with self._active_goal_lock:
+            self._active_goal_handle = goal_handle
 
         try:
-            self._apply_goal_settings(goal)
-            feedback.state = 'queued'
-            goal_handle.publish_feedback(feedback)
-
-            self._speech_client.speak(goal.text)
-            feedback.state = 'speaking'
-            goal_handle.publish_feedback(feedback)
-
-            completed = self._wait_until_done(goal_handle, text=goal.text)
-            if goal_handle.is_cancel_requested:
-                self._stop_synthesis()
-                goal_handle.canceled()
+            if self._speech_client is None:
                 result.success = False
-                result.message = 'Синтез отменен'
+                result.message = 'speech-dispatcher недоступен'
+                goal_handle.abort()
                 return result
 
-            if not completed:
-                self.get_logger().debug('Таймаут ожидания окончания синтеза речи')
+            try:
+                self._apply_goal_settings(goal)
+                feedback.state = 'queued'
+                goal_handle.publish_feedback(feedback)
 
-            feedback.state = 'completed'
-            goal_handle.publish_feedback(feedback)
-            goal_handle.succeed()
-            result.success = True
-            result.message = 'Синтез завершен'
-            return result
-        except Exception as exc:  # noqa: BLE001
-            self.get_logger().error(f'Ошибка синтеза речи: {exc}')
-            self._stop_synthesis()
-            self._close_speech_client()
-            result.success = False
-            result.message = str(exc)
-            goal_handle.abort()
-            return result
+                self._speech_client.speak(goal.text)
+                feedback.state = 'speaking'
+                goal_handle.publish_feedback(feedback)
+
+                completed = self._wait_until_done(goal_handle, text=goal.text)
+                if goal_handle.is_cancel_requested:
+                    self._stop_synthesis()
+                    goal_handle.canceled()
+                    result.success = False
+                    result.message = 'Синтез отменен'
+                    return result
+
+                if not completed:
+                    self.get_logger().debug('Таймаут ожидания окончания синтеза речи')
+
+                feedback.state = 'completed'
+                goal_handle.publish_feedback(feedback)
+                goal_handle.succeed()
+                result.success = True
+                result.message = 'Синтез завершен'
+                return result
+            except Exception as exc:  # noqa: BLE001
+                self.get_logger().error(f'Ошибка синтеза речи: {exc}')
+                self._stop_synthesis()
+                result.success = False
+                result.message = str(exc)
+                goal_handle.abort()
+                return result
+        finally:
+            with self._active_goal_lock:
+                if self._active_goal_handle is goal_handle:
+                    self._active_goal_handle = None
 
     def _apply_goal_settings(self, goal: TextToSpeech.Goal) -> None:
         if self._speech_client is None:

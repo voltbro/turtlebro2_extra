@@ -121,7 +121,15 @@ class RotateServer(Node):
         return GoalResponse.ACCEPT
 
     def cancel_callback(self, goal_handle) -> CancelResponse:
+        with self._active_goal_lock:
+            active_goal = self._active_goal
+        if active_goal is not None and active_goal.goal_handle is not goal_handle:
+            self.get_logger().warning('Запрос отмены поворота отклонен: активна другая цель')
+            return CancelResponse.REJECT
+
         self.get_logger().info('Получен запрос на отмену поворота')
+        if active_goal is not None:
+            self.cmd_vel.publish(Twist())
         return CancelResponse.ACCEPT
 
     def execute_callback(self, goal_handle):

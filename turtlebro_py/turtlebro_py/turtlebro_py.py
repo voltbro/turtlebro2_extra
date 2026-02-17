@@ -13,6 +13,7 @@
 # limitations under the License.
 #
 import math
+import threading
 import time
 from collections.abc import Mapping as MappingABC, Sequence as SequenceABC
 from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
@@ -111,6 +112,8 @@ class TurtleBro(RosContextManaged):
         self.linear_x_val = 0.09
         self.angular_z_val = 0.9
         self._action_timeout = 30.0
+        self._active_action_goals_lock = threading.Lock()
+        self._active_action_goals: dict[str, Any] = {}
 
         self._move_client = ActionClient(self._node, Move, 'action_move')
         self._rotate_client = ActionClient(self._node, Rotation, 'action_rotate')
@@ -141,6 +144,8 @@ class TurtleBro(RosContextManaged):
                 self.vel_pub.publish(Twist())
         except Exception:
             pass
+
+        self._cancel_active_action_goals()
 
         if hasattr(self, 'u'):
             self.u.close()
@@ -410,17 +415,59 @@ class TurtleBro(RosContextManaged):
         if goal_handle is None or not goal_handle.accepted:
             raise RuntimeError(f'Action {goal_name} отклонено или недоступно')
 
+        self._set_active_action_goal(goal_name, goal_handle)
         result_future = goal_handle.get_result_async()
-        goal_result = self.__wait_for_future(
-            result_future,
-            self._action_timeout,
-            f'{goal_name} result',
-        )
+        try:
+            goal_result = self.__wait_for_future(
+                result_future,
+                self._action_timeout,
+                f'{goal_name} result',
+            )
+        except BaseException:  # noqa: BLE001
+            self._cancel_action_goal(goal_name, goal_handle)
+            raise
+        finally:
+            self._clear_active_action_goal(goal_name, goal_handle)
+
         if goal_result is None:
             raise RuntimeError(f'Action {goal_name} не вернул результат')
         if goal_result.status != GoalStatus.STATUS_SUCCEEDED:
             raise RuntimeError(f'Action {goal_name} завершен со статусом {goal_result.status}')
         return goal_result.result
+
+    def _set_active_action_goal(self, goal_name: str, goal_handle) -> None:
+        with self._active_action_goals_lock:
+            self._active_action_goals[goal_name] = goal_handle
+
+    def _clear_active_action_goal(self, goal_name: str, goal_handle=None) -> None:
+        with self._active_action_goals_lock:
+            active_goal_handle = self._active_action_goals.get(goal_name)
+            if goal_handle is None or active_goal_handle is goal_handle:
+                self._active_action_goals.pop(goal_name, None)
+
+    def _cancel_action_goal(self, goal_name: str, goal_handle, timeout: float = 1.0) -> None:
+        try:
+            cancel_future = goal_handle.cancel_goal_async()
+        except Exception as exc:  # noqa: BLE001
+            self._node.get_logger().warning(f'Не удалось отправить отмену Action {goal_name}: {exc}')
+            return
+
+        try:
+            self.__wait_for_future(cancel_future, timeout, f'{goal_name} cancel')
+        except Exception as exc:  # noqa: BLE001
+            self._node.get_logger().warning(f'Не удалось дождаться отмены Action {goal_name}: {exc}')
+
+    def _cancel_active_action_goals(self) -> None:
+        lock = getattr(self, '_active_action_goals_lock', None)
+        if lock is None:
+            return
+
+        with lock:
+            active_goals = list(getattr(self, '_active_action_goals', {}).items())
+
+        for goal_name, goal_handle in active_goals:
+            self._cancel_action_goal(goal_name, goal_handle)
+            self._clear_active_action_goal(goal_name, goal_handle)
 
     def __wait_for_future(
         self,
@@ -570,6 +617,8 @@ class Utility:
         self._owns_tts_client = tts_action_client is None
         self._tts_client = tts_action_client or ActionClient(self._node, TextToSpeech, 'text_to_speech')
         self._tts_result_timeout = 90.0
+        self._active_tts_goal_lock = threading.Lock()
+        self._active_tts_goal_handle = None
 
         time_counter = 0.0
         time_to_wait = 3.0
@@ -598,6 +647,7 @@ class Utility:
         if self._closed:
             return
         self._closed = True
+        self._cancel_active_tts_goal()
         for sub in self._subscriptions:
             try:
                 self._node.destroy_subscription(sub)
@@ -828,28 +878,59 @@ class Utility:
         if goal_handle is None or not goal_handle.accepted:
             raise RuntimeError('Сервер синтеза речи отклонил цель')
 
-        result_future = goal_handle.get_result_async()
-        estimated = len(goal.text) / 8.0 + 5.0
-        timeout = min(self._tts_result_timeout, max(5.0, estimated))
+        self._set_active_tts_goal(goal_handle)
         try:
-            self._wait_for_future(result_future, timeout, 'text_to_speech result')
-        except TimeoutError as exc:
-            cancel_future = goal_handle.cancel_goal_async()
+            result_future = goal_handle.get_result_async()
+            estimated = len(goal.text) / 8.0 + 5.0
+            timeout = min(self._tts_result_timeout, max(5.0, estimated))
+            try:
+                self._wait_for_future(result_future, timeout, 'text_to_speech result')
+            except TimeoutError as exc:
+                cancel_future = goal_handle.cancel_goal_async()
+                try:
+                    self._wait_for_future(cancel_future, 1.0, 'text_to_speech cancel')
+                except Exception:  # noqa: BLE001
+                    pass
+                raise TimeoutError('Сервер синтеза речи не ответил вовремя') from exc
+
+            goal_result = result_future.result()
+            if goal_result is None:
+                raise RuntimeError('Сервер синтеза речи вернул пустой ответ')
+            if goal_result.status != GoalStatus.STATUS_SUCCEEDED:
+                raise RuntimeError(f'Синтез речи завершился со статусом {goal_result.status}')
+            result = goal_result.result
+            if not result.success:
+                raise RuntimeError(result.message or 'Ошибка синтеза речи')
+            return result.message
+        finally:
+            self._clear_active_tts_goal(goal_handle)
+
+    def _set_active_tts_goal(self, goal_handle) -> None:
+        with self._active_tts_goal_lock:
+            self._active_tts_goal_handle = goal_handle
+
+    def _clear_active_tts_goal(self, goal_handle=None) -> None:
+        with self._active_tts_goal_lock:
+            if goal_handle is None or self._active_tts_goal_handle is goal_handle:
+                self._active_tts_goal_handle = None
+
+    def _cancel_active_tts_goal(self) -> None:
+        with self._active_tts_goal_lock:
+            active_goal_handle = self._active_tts_goal_handle
+
+        if active_goal_handle is None:
+            return
+
+        try:
+            cancel_future = active_goal_handle.cancel_goal_async()
             try:
                 self._wait_for_future(cancel_future, 1.0, 'text_to_speech cancel')
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
-            raise TimeoutError('Сервер синтеза речи не ответил вовремя') from exc
-
-        goal_result = result_future.result()
-        if goal_result is None:
-            raise RuntimeError('Сервер синтеза речи вернул пустой ответ')
-        if goal_result.status != GoalStatus.STATUS_SUCCEEDED:
-            raise RuntimeError(f'Синтез речи завершился со статусом {goal_result.status}')
-        result = goal_result.result
-        if not result.success:
-            raise RuntimeError(result.message or 'Ошибка синтеза речи')
-        return result.message
+        except Exception:
+            pass
+        finally:
+            self._clear_active_tts_goal(active_goal_handle)
 
     # Воспроизведение файла
     def play(self, filename, *, blocking=False, device=''):
