@@ -44,6 +44,8 @@ class TextToSpeechServer(Node):
         self._active_goal_lock = threading.Lock()
         self._active_goal_handle = None
 
+        self._init_speech_client()
+
         self._action_server = ActionServer(
             self,
             TextToSpeech,
