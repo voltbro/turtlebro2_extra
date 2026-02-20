@@ -61,26 +61,19 @@ class RotateServer(Node):
     def __init__(self) -> None:
         super().__init__('rotate_server_node')
         self._callback_group = ReentrantCallbackGroup()
-        self.cmd_vel = self.create_publisher(Twist, '/cmd_vel', 10)
+
         self.odom = Odometry()
         self._odom_received = False
         self._odom_event = threading.Event()
         self._last_odom_time = time.monotonic()
-        self.create_subscription(
-            Odometry,
-            '/odom',
-            self.subscriber_odometry_cb,
-            10,
-            callback_group=self._callback_group,
-        )
 
         self._active_goal_lock = threading.Lock()
         self._active_goal: _RotationGoalContext | None = None
-        self._control_timer = self.create_timer(
-            1.0 / 40.0,
-            self._control_step,
-            callback_group=self._callback_group,
-        )
+
+        self.cmd_vel = None
+        self._odom_subscription = None
+        self._control_timer = None
+        self._resources_ready = False
 
         self._action_server = ActionServer(
             self,
@@ -92,6 +85,24 @@ class RotateServer(Node):
             callback_group=self._callback_group,
         )
         self.get_logger().info('Запущен Action-сервер поворота')
+
+    def _ensure_resources(self) -> None:
+        if self._resources_ready:
+            return
+        self.cmd_vel = self.create_publisher(Twist, '/cmd_vel', 10)
+        self._odom_subscription = self.create_subscription(
+            Odometry,
+            '/odom',
+            self.subscriber_odometry_cb,
+            10,
+            callback_group=self._callback_group,
+        )
+        self._control_timer = self.create_timer(
+            1.0 / 40.0,
+            self._control_step,
+            callback_group=self._callback_group,
+        )
+        self._resources_ready = True
 
     def subscriber_odometry_cb(self, msg: Odometry) -> None:
         self.odom = msg
@@ -114,6 +125,13 @@ class RotateServer(Node):
         return CancelResponse.ACCEPT
 
     def execute_callback(self, goal_handle):
+        self._ensure_resources()
+        try:
+            return self._execute_goal(goal_handle)
+        finally:
+            self._release_resources()
+
+    def _execute_goal(self, goal_handle):
         goal = goal_handle.request
         total_angle_deg = abs(goal.goal)
         if not self._wait_for_odom(timeout=2.0):
@@ -248,6 +266,9 @@ class RotateServer(Node):
         return max(0.0, time.monotonic() - self._last_odom_time)
 
     def _wait_for_odom(self, timeout: float) -> bool:
+        if self._odom_stale_seconds() <= 1.0:
+            return True
+        self._odom_event.clear()
         if self._odom_event.wait(timeout=timeout):
             return self._odom_received
         return False
@@ -264,7 +285,7 @@ def main(args=None) -> None:
         pass
     finally:
         try:
-            if rclpy.ok():
+            if rclpy.ok() and node.cmd_vel is not None:
                 node.cmd_vel.publish(Twist())
         except Exception:
             pass
