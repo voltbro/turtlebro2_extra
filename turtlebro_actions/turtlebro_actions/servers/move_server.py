@@ -171,8 +171,11 @@ class MoveServer(Node):
                 break
 
         if context.result is None:
-            self.cmd_vel.publish(Twist())
-            goal_handle.abort()
+            self._safe_publish_stop()
+            try:
+                goal_handle.abort()
+            except Exception:  # noqa: BLE001
+                pass
             return self._build_result(0.0, direction)
 
         return context.result
@@ -182,6 +185,10 @@ class MoveServer(Node):
             context = self._active_goal
 
         if context is None:
+            return
+
+        if not rclpy.ok():
+            context.done_event.set()
             return
 
         goal_handle = context.goal_handle
@@ -233,19 +240,29 @@ class MoveServer(Node):
         self.cmd_vel.publish(cmd)
 
     def _complete_goal(self, context: _MoveGoalContext, status: str, result: Move.Result) -> None:
-        if status == 'success':
-            context.goal_handle.succeed()
-        elif status == 'cancel':
-            context.goal_handle.canceled()
-        else:
-            context.goal_handle.abort()
+        try:
+            if status == 'success':
+                context.goal_handle.succeed()
+            elif status == 'cancel':
+                context.goal_handle.canceled()
+            else:
+                context.goal_handle.abort()
+        except Exception:  # noqa: BLE001
+            pass
 
-        self.cmd_vel.publish(Twist())
+        self._safe_publish_stop()
         context.result = result
         context.done_event.set()
         with self._active_goal_lock:
             if self._active_goal is context:
                 self._active_goal = None
+
+    def _safe_publish_stop(self) -> None:
+        try:
+            if self.cmd_vel is not None:
+                self.cmd_vel.publish(Twist())
+        except Exception:  # noqa: BLE001
+            pass
 
     def _compute_distance(self, start_x: float, start_y: float, current_pose) -> float:
         dx = start_x - float(current_pose.x)
@@ -281,11 +298,7 @@ def main(args=None) -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        try:
-            if rclpy.ok() and node.cmd_vel is not None:
-                node.cmd_vel.publish(Twist())
-        except Exception:
-            pass
+        node._safe_publish_stop()
         try:
             executor.shutdown()
         except Exception:

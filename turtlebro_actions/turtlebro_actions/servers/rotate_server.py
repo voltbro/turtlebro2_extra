@@ -161,8 +161,11 @@ class RotateServer(Node):
                 break
 
         if context.result is None:
-            self.cmd_vel.publish(Twist())
-            goal_handle.abort()
+            self._safe_publish_stop()
+            try:
+                goal_handle.abort()
+            except Exception:  # noqa: BLE001
+                pass
             return self._build_result(0.0)
 
         return context.result
@@ -172,6 +175,10 @@ class RotateServer(Node):
             context = self._active_goal
 
         if context is None:
+            return
+
+        if not rclpy.ok():
+            context.done_event.set()
             return
 
         goal_handle = context.goal_handle
@@ -223,19 +230,29 @@ class RotateServer(Node):
         self.cmd_vel.publish(cmd)
 
     def _complete_goal(self, context: _RotationGoalContext, status: str, result: Rotation.Result) -> None:
-        if status == 'success':
-            context.goal_handle.succeed()
-        elif status == 'cancel':
-            context.goal_handle.canceled()
-        else:
-            context.goal_handle.abort()
+        try:
+            if status == 'success':
+                context.goal_handle.succeed()
+            elif status == 'cancel':
+                context.goal_handle.canceled()
+            else:
+                context.goal_handle.abort()
+        except Exception:  # noqa: BLE001
+            pass
 
-        self.cmd_vel.publish(Twist())
+        self._safe_publish_stop()
         context.result = result
         context.done_event.set()
         with self._active_goal_lock:
             if self._active_goal is context:
                 self._active_goal = None
+
+    def _safe_publish_stop(self) -> None:
+        try:
+            if self.cmd_vel is not None:
+                self.cmd_vel.publish(Twist())
+        except Exception:  # noqa: BLE001
+            pass
 
     def _current_yaw(self) -> float:
         orientation = self.odom.pose.pose.orientation
@@ -278,11 +295,7 @@ def main(args=None) -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        try:
-            if rclpy.ok() and node.cmd_vel is not None:
-                node.cmd_vel.publish(Twist())
-        except Exception:
-            pass
+        node._safe_publish_stop()
         try:
             executor.shutdown()
         except Exception:
