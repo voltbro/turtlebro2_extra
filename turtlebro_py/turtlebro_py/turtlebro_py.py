@@ -228,23 +228,12 @@ class TurtleBro(RosContextManaged):
             self._node.get_logger().error(f'Не удалось выполнить left: {exc}')
             return False
 
-    def goto(self, x, y):
+    def goto(self, x, y, theta=0):
         try:
-            self.__goto(x, y)
+            self.__goto(x, y, theta)
             return True
         except Exception as exc:  # noqa: BLE001
             self._node.get_logger().error(f'Не удалось выполнить goto: {exc}')
-            return False
-
-    def turn(self, degrees):
-        if not isinstance(degrees, (int, float)):
-            self._node.get_logger().error('Ошибка! Угол должен быть числом')
-            return False
-        try:
-            self.__turn(degrees)
-            return True
-        except Exception as exc:  # noqa: BLE001
-            self._node.get_logger().error(f'Не удалось выполнить turn: {exc}')
             return False
 
     # Взаимодействие с Utility
