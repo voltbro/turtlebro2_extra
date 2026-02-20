@@ -128,12 +128,6 @@ class MoveServer(Node):
 
     def execute_callback(self, goal_handle):
         self._ensure_resources()
-        try:
-            return self._execute_goal(goal_handle)
-        finally:
-            self._release_resources()
-
-    def _execute_goal(self, goal_handle):
         goal = goal_handle.request
         total_distance = float(abs(goal.goal))
         if math.isclose(total_distance, 0.0, abs_tol=1e-4):

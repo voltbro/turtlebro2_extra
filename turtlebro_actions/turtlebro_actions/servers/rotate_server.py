@@ -126,12 +126,6 @@ class RotateServer(Node):
 
     def execute_callback(self, goal_handle):
         self._ensure_resources()
-        try:
-            return self._execute_goal(goal_handle)
-        finally:
-            self._release_resources()
-
-    def _execute_goal(self, goal_handle):
         goal = goal_handle.request
         total_angle_deg = abs(goal.goal)
         if not self._wait_for_odom(timeout=2.0):
