@@ -62,26 +62,19 @@ class MoveServer(Node):
     def __init__(self) -> None:
         super().__init__('move_server_node')
         self._callback_group = ReentrantCallbackGroup()
-        self.cmd_vel = self.create_publisher(Twist, '/cmd_vel', 10)
+
         self.odom = Odometry()
         self._odom_received = False
         self._odom_event = threading.Event()
         self._last_odom_time = time.monotonic()
-        self.create_subscription(
-            Odometry,
-            '/odom',
-            self.subscriber_odometry_cb,
-            10,
-            callback_group=self._callback_group,
-        )
 
         self._active_goal_lock = threading.Lock()
         self._active_goal: _MoveGoalContext | None = None
-        self._control_timer = self.create_timer(
-            1.0 / 40.0,
-            self._control_step,
-            callback_group=self._callback_group,
-        )
+
+        self.cmd_vel = None
+        self._odom_subscription = None
+        self._control_timer = None
+        self._resources_ready = False
 
         self._action_server = ActionServer(
             self,
@@ -93,6 +86,24 @@ class MoveServer(Node):
             callback_group=self._callback_group,
         )
         self.get_logger().info('Запущен Action-сервер перемещения')
+
+    def _ensure_resources(self) -> None:
+        if self._resources_ready:
+            return
+        self.cmd_vel = self.create_publisher(Twist, '/cmd_vel', 10)
+        self._odom_subscription = self.create_subscription(
+            Odometry,
+            '/odom',
+            self.subscriber_odometry_cb,
+            10,
+            callback_group=self._callback_group,
+        )
+        self._control_timer = self.create_timer(
+            1.0 / 40.0,
+            self._control_step,
+            callback_group=self._callback_group,
+        )
+        self._resources_ready = True
 
     def subscriber_odometry_cb(self, msg: Odometry) -> None:
         self.odom = msg
@@ -116,6 +127,7 @@ class MoveServer(Node):
         return CancelResponse.ACCEPT
 
     def execute_callback(self, goal_handle):
+        self._ensure_resources()
         goal = goal_handle.request
         total_distance = float(abs(goal.goal))
         if math.isclose(total_distance, 0.0, abs_tol=1e-4):
@@ -159,8 +171,11 @@ class MoveServer(Node):
                 break
 
         if context.result is None:
-            self.cmd_vel.publish(Twist())
-            goal_handle.abort()
+            self._safe_publish_stop()
+            try:
+                goal_handle.abort()
+            except Exception:  # noqa: BLE001
+                pass
             return self._build_result(0.0, direction)
 
         return context.result
@@ -170,6 +185,10 @@ class MoveServer(Node):
             context = self._active_goal
 
         if context is None:
+            return
+
+        if not rclpy.ok():
+            context.done_event.set()
             return
 
         goal_handle = context.goal_handle
@@ -221,19 +240,29 @@ class MoveServer(Node):
         self.cmd_vel.publish(cmd)
 
     def _complete_goal(self, context: _MoveGoalContext, status: str, result: Move.Result) -> None:
-        if status == 'success':
-            context.goal_handle.succeed()
-        elif status == 'cancel':
-            context.goal_handle.canceled()
-        else:
-            context.goal_handle.abort()
+        try:
+            if status == 'success':
+                context.goal_handle.succeed()
+            elif status == 'cancel':
+                context.goal_handle.canceled()
+            else:
+                context.goal_handle.abort()
+        except Exception:  # noqa: BLE001
+            pass
 
-        self.cmd_vel.publish(Twist())
+        self._safe_publish_stop()
         context.result = result
         context.done_event.set()
         with self._active_goal_lock:
             if self._active_goal is context:
                 self._active_goal = None
+
+    def _safe_publish_stop(self) -> None:
+        try:
+            if self.cmd_vel is not None:
+                self.cmd_vel.publish(Twist())
+        except Exception:  # noqa: BLE001
+            pass
 
     def _compute_distance(self, start_x: float, start_y: float, current_pose) -> float:
         dx = start_x - float(current_pose.x)
@@ -251,6 +280,9 @@ class MoveServer(Node):
         return max(0.0, time.monotonic() - self._last_odom_time)
 
     def _wait_for_odom(self, timeout: float) -> bool:
+        if self._odom_stale_seconds() <= 1.0:
+            return True
+        self._odom_event.clear()
         if self._odom_event.wait(timeout=timeout):
             return self._odom_received
         return False
@@ -266,11 +298,7 @@ def main(args=None) -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        try:
-            if rclpy.ok():
-                node.cmd_vel.publish(Twist())
-        except Exception:
-            pass
+        node._safe_publish_stop()
         try:
             executor.shutdown()
         except Exception:

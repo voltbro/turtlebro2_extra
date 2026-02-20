@@ -14,17 +14,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-import threading
 from typing import Optional
 
 import rclpy
 from rclpy.node import Node
-from rclpy.task import Future
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
+from rclpy.wait_for_message import wait_for_message
 from sensor_msgs.msg import CompressedImage
 
 from turtlebro_interfaces.srv import Photo
+
+_IMAGE_TOPIC = '/front_camera/image_raw/compressed'
 
 
 class PhotoService(Node):
@@ -33,16 +34,6 @@ class PhotoService(Node):
     def __init__(self) -> None:
         super().__init__('photo_service')
         self._callback_group = ReentrantCallbackGroup()
-        self._last_image: Optional[CompressedImage] = None
-        self._image_event = threading.Event()
-
-        self._subscription = self.create_subscription(
-            CompressedImage,
-            '/front_camera/image_raw/compressed',
-            self._image_callback,
-            10,
-            callback_group=self._callback_group,
-        )
 
         self._service = self.create_service(
             Photo,
@@ -52,21 +43,16 @@ class PhotoService(Node):
         )
         self.get_logger().info('Сервис получения фото готов')
 
-    def _image_callback(self, msg: CompressedImage) -> None:
-        self._last_image = msg
-        self._image_event.set()
-
     def handle_photo(self, request: Photo.Request, response: Photo.Response) -> Photo.Response:
-        timeout_sec = 5.0
-
-        if self._last_image is None:
-            if not self._image_event.wait(timeout=timeout_sec):
-                self.get_logger().error(
-                    'На топик /front_camera/image_raw/compressed не поступило изображение'
-                )
-                return response
-
-        response.photo = self._last_image
+        success, image = wait_for_message(
+            CompressedImage, self, _IMAGE_TOPIC, time_to_wait=5.0,
+        )
+        if not success:
+            self.get_logger().error(
+                f'На топик {_IMAGE_TOPIC} не поступило изображение'
+            )
+            return response
+        response.photo = image
         return response
 
 

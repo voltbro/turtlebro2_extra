@@ -41,8 +41,6 @@ class TextToSpeechServer(Node):
         super().__init__('text_to_speech_server')
         self._speech_client: Optional['speechd.SSIPClient'] = None
 
-        self._init_speech_client()
-
         self._action_server = ActionServer(
             self,
             TextToSpeech,
@@ -55,12 +53,17 @@ class TextToSpeechServer(Node):
         self.get_logger().info('Запущен Action-сервер синтеза речи')
 
     def destroy_node(self) -> None:
-        if self._speech_client is not None:
+        self._close_speech_client()
+        return super().destroy_node()
+
+    def _close_speech_client(self) -> None:
+        client = self._speech_client
+        self._speech_client = None
+        if client is not None:
             try:
-                self._speech_client.close()
+                client.close()
             except Exception as exc:  # noqa: BLE001
                 self.get_logger().warning(f'Ошибка при закрытии клиента speech-dispatcher: {exc}')
-        return super().destroy_node()
 
     def _init_speech_client(self) -> None:
         if speechd is None:
@@ -77,7 +80,12 @@ class TextToSpeechServer(Node):
 
         self._speech_client = client
 
+    def _ensure_speech_client(self) -> None:
+        if self._speech_client is None:
+            self._init_speech_client()
+
     def goal_callback(self, goal_request: TextToSpeech.Goal) -> GoalResponse:
+        self._ensure_speech_client()
         if self._speech_client is None:
             self.get_logger().error('Запрос синтеза отклонен: speech-dispatcher недоступен')
             return GoalResponse.REJECT
@@ -133,6 +141,7 @@ class TextToSpeechServer(Node):
         except Exception as exc:  # noqa: BLE001
             self.get_logger().error(f'Ошибка синтеза речи: {exc}')
             self._stop_synthesis()
+            self._close_speech_client()
             result.success = False
             result.message = str(exc)
             goal_handle.abort()
