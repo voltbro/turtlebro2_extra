@@ -65,15 +65,17 @@ class RotateServer(Node):
         self.odom = Odometry()
         self._odom_received = False
         self._odom_event = threading.Event()
+        self._control_period_seconds = 1.0 / 40.0
+        self._odom_period_seconds = 0.1
         self._last_odom_time = time.monotonic()
 
         self._active_goal_lock = threading.Lock()
         self._active_goal: _RotationGoalContext | None = None
-
-        self.cmd_vel = None
-        self._odom_subscription = None
-        self._control_timer = None
-        self._resources_ready = False
+        self._control_timer = self.create_timer(
+            self._control_period_seconds,
+            self._control_step,
+            callback_group=self._callback_group,
+        )
 
         self._action_server = ActionServer(
             self,
@@ -108,7 +110,11 @@ class RotateServer(Node):
         self.odom = msg
         self._odom_received = True
         self._odom_event.set()
-        self._last_odom_time = time.monotonic()
+        now = time.monotonic()
+        odom_dt = now - self._last_odom_time
+        if 0.001 <= odom_dt <= 1.0:
+            self._odom_period_seconds = 0.8 * self._odom_period_seconds + 0.2 * odom_dt
+        self._last_odom_time = now
 
     def goal_callback(self, goal_request: Rotation.Goal) -> GoalResponse:
         with self._active_goal_lock:
@@ -121,7 +127,15 @@ class RotateServer(Node):
         return GoalResponse.ACCEPT
 
     def cancel_callback(self, goal_handle) -> CancelResponse:
+        with self._active_goal_lock:
+            active_goal = self._active_goal
+        if active_goal is not None and active_goal.goal_handle is not goal_handle:
+            self.get_logger().warning('Запрос отмены поворота отклонен: активна другая цель')
+            return CancelResponse.REJECT
+
         self.get_logger().info('Получен запрос на отмену поворота')
+        if active_goal is not None:
+            self.cmd_vel.publish(Twist())
         return CancelResponse.ACCEPT
 
     def execute_callback(self, goal_handle):
@@ -225,6 +239,8 @@ class RotateServer(Node):
             context.max_speed,
             min_speed=context.min_speed,
         )
+        remaining_angle_rad = max(context.total_angle_rad - context.accumulated_radians, 0.0)
+        speed = min(speed, self._max_speed_for_remaining_angle(remaining_angle_rad))
         cmd = Twist()
         cmd.angular.z = context.direction * speed
         self.cmd_vel.publish(cmd)
@@ -283,6 +299,13 @@ class RotateServer(Node):
         if self._odom_event.wait(timeout=timeout):
             return self._odom_received
         return False
+
+    def _max_speed_for_remaining_angle(self, remaining_angle_rad: float) -> float:
+        if remaining_angle_rad <= 0.0:
+            return 0.0
+        control_period = max(getattr(self, '_control_period_seconds', 1.0 / 40.0), 0.001)
+        odom_period = max(getattr(self, '_odom_period_seconds', control_period), control_period)
+        return remaining_angle_rad / odom_period
 
 
 def main(args=None) -> None:
