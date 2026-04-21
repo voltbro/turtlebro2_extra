@@ -63,6 +63,9 @@ class RotateServer(Node):
         self._callback_group = ReentrantCallbackGroup()
 
         self.odom = Odometry()
+        self.cmd_vel = None
+        self._odom_subscription = None
+        self._resources_ready = False
         self._odom_received = False
         self._odom_event = threading.Event()
         self._control_period_seconds = 1.0 / 40.0
@@ -71,11 +74,7 @@ class RotateServer(Node):
 
         self._active_goal_lock = threading.Lock()
         self._active_goal: _RotationGoalContext | None = None
-        self._control_timer = self.create_timer(
-            self._control_period_seconds,
-            self._control_step,
-            callback_group=self._callback_group,
-        )
+        self._control_timer = None
 
         self._action_server = ActionServer(
             self,
