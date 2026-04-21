@@ -25,6 +25,7 @@ if str(PACKAGE_ROOT) not in sys.path:
 MODULES = [
     "turtlebro_actions",
     "turtlebro_actions.servers",
+    "turtlebro_actions.utils.linear_pid_controller",
     "turtlebro_actions.examples",
     "turtlebro_actions.examples.move_client",
     "turtlebro_actions.examples.text_to_speech_client",
@@ -35,6 +36,7 @@ MODULES = [
     "turtlebro_actions.servers.play_audio_service",
     "turtlebro_actions.servers.rotate_server",
     "turtlebro_actions.servers.move_server",
+    "turtlebro_actions.servers.move_linear_server",
     "turtlebro_actions.servers.photo_service",
     "turtlebro_actions.servers.text_to_speech_server",
 ]

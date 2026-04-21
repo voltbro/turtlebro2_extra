@@ -28,6 +28,13 @@ def generate_launch_description() -> LaunchDescription:
             ),
             Node(
                 package='turtlebro_actions',
+                executable='move_linear_server.py',
+                name='move_linear_server',
+                output='log',
+                respawn=True,
+            ),
+            Node(
+                package='turtlebro_actions',
                 executable='rotate_server.py',
                 name='rotate_server',
                 output='log',

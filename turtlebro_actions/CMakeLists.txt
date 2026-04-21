@@ -26,6 +26,7 @@ set(ACTIONS_SERVERS
   turtlebro_actions/servers/record_audio_service.py
   turtlebro_actions/servers/play_audio_service.py
   turtlebro_actions/servers/move_server.py
+  turtlebro_actions/servers/move_linear_server.py
   turtlebro_actions/servers/photo_service.py
   turtlebro_actions/servers/rotate_server.py
   turtlebro_actions/servers/text_to_speech_server.py
