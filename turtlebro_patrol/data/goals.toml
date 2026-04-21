@@ -1,0 +1,10 @@
+[home]
+pose = {x = 0, y = 0, theta = 0}
+
+[[patrolling]]
+name = "Goal1"
+pose = {x = 0.5, y = 0, theta = 45}
+
+[[patrolling]]
+name = "Goal2"
+pose = {x = 0, y = -0.5, theta = -45}
