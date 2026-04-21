@@ -29,7 +29,17 @@ from tf_transformations import euler_from_quaternion
 
 from turtlebro_interfaces.action import Rotation
 
-from turtlebro_actions.utils.motion_profile import compute_trapezoidal_speed, normalize_angle
+from turtlebro_actions.utils.motion_profile import (
+    compute_trapezoidal_speed,
+    normalize_angle,
+    rotation_progress_from_start_rad,
+)
+
+# Трапециевидный профиль угловой скорости и нижняя скорость (рад/с), если в цели speed=0
+_ROTATE_DEFAULT_MAX_SPEED = 0.9
+_ROTATE_MIN_SPEED_FRAC_OF_MAX = 0.1
+_ROTATE_MIN_SPEED_FLOOR = 0.03
+_ROTATE_TRAPEZOID_RAMP_FRACTION = 0.4
 
 
 class _RotationGoalContext:
@@ -42,14 +52,18 @@ class _RotationGoalContext:
         direction: float,
         max_speed: float,
         min_speed: float,
+        start_yaw: float,
         prev_yaw: float,
+        use_absolute_progress: bool,
     ) -> None:
         self.goal_handle = goal_handle
         self.total_angle_rad = total_angle_rad
         self.direction = direction
         self.max_speed = max_speed
         self.min_speed = min_speed
+        self.start_yaw = start_yaw
         self.prev_yaw = prev_yaw
+        self.use_absolute_progress = use_absolute_progress
         self.accumulated_radians = 0.0
         self.result = None
         self.done_event = threading.Event()
@@ -152,16 +166,23 @@ class RotateServer(Node):
 
         total_angle_rad = math.radians(total_angle_deg)
         direction = 1.0 if goal.goal >= 0 else -1.0
-        max_speed = abs(goal.speed) if goal.speed != 0.0 else 0.9
-        min_speed = min(max(max_speed * 0.25, 0.1), max_speed)
+        max_speed = abs(goal.speed) if goal.speed != 0.0 else _ROTATE_DEFAULT_MAX_SPEED
+        min_speed = min(
+            max(max_speed * _ROTATE_MIN_SPEED_FRAC_OF_MAX, _ROTATE_MIN_SPEED_FLOOR),
+            max_speed,
+        )
 
+        yaw0 = self._current_yaw()
+        use_absolute = total_angle_rad <= math.pi + 1e-9
         context = _RotationGoalContext(
             goal_handle,
             total_angle_rad,
             direction,
             max_speed,
             min_speed,
-            prev_yaw=self._current_yaw(),
+            start_yaw=yaw0,
+            prev_yaw=yaw0,
+            use_absolute_progress=use_absolute,
         )
 
         with self._active_goal_lock:
@@ -197,7 +218,6 @@ class RotateServer(Node):
         goal_handle = context.goal_handle
 
         if goal_handle.is_cancel_requested:
-            self.get_logger().info('Цель поворота отменена')
             self._complete_goal(
                 context,
                 status='cancel',
@@ -211,20 +231,25 @@ class RotateServer(Node):
             return
 
         current_yaw = self._current_yaw()
-        delta = normalize_angle(current_yaw - context.prev_yaw)
-        context.prev_yaw = current_yaw
-        context.accumulated_radians += delta * context.direction
-        context.accumulated_radians = max(
-            min(context.accumulated_radians, context.total_angle_rad),
-            0.0,
-        )
+        if context.use_absolute_progress:
+            context.accumulated_radians = rotation_progress_from_start_rad(
+                context.start_yaw,
+                current_yaw,
+                context.direction,
+                context.total_angle_rad,
+                context.accumulated_radians,
+            )
+        else:
+            delta = normalize_angle(current_yaw - context.prev_yaw)
+            context.prev_yaw = current_yaw
+            context.accumulated_radians += delta * context.direction
+            context.accumulated_radians = max(context.accumulated_radians, 0.0)
 
         feedback = Rotation.Feedback()
         feedback.feedback = int(round(math.degrees(context.accumulated_radians * context.direction)))
         goal_handle.publish_feedback(feedback)
 
         if abs(context.accumulated_radians) >= context.total_angle_rad - math.radians(0.5):
-            self.get_logger().info('Цель поворота выполнена')
             self._complete_goal(
                 context,
                 status='success',
@@ -237,6 +262,7 @@ class RotateServer(Node):
             context.total_angle_rad,
             context.max_speed,
             min_speed=context.min_speed,
+            ramp_fraction=_ROTATE_TRAPEZOID_RAMP_FRACTION,
         )
         remaining_angle_rad = max(context.total_angle_rad - context.accumulated_radians, 0.0)
         speed = min(speed, self._max_speed_for_remaining_angle(remaining_angle_rad))
@@ -245,6 +271,8 @@ class RotateServer(Node):
         self.cmd_vel.publish(cmd)
 
     def _complete_goal(self, context: _RotationGoalContext, status: str, result: Rotation.Result) -> None:
+        self.get_logger().info(f'Поворот завершён ({status}): {result.result}°')
+
         try:
             if status == 'success':
                 context.goal_handle.succeed()

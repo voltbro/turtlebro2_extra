@@ -31,6 +31,12 @@ from turtlebro_interfaces.action import Move
 
 from turtlebro_actions.utils.motion_profile import compute_trapezoidal_speed
 
+# Трапециевидный профиль линейной скорости и min_speed при перемещении (м/с)
+_MOVE_DEFAULT_MAX_SPEED = 0.09
+_MOVE_MIN_SPEED_FRAC_OF_MAX = 0.2
+_MOVE_MIN_SPEED_FLOOR = 0.02
+_MOVE_TRAPEZOID_RAMP_FRACTION = 0.25
+
 
 class _MoveGoalContext:
     """Хранит состояние текущей цели перемещения."""
@@ -156,8 +162,11 @@ class MoveServer(Node):
         direction = 1.0 if goal.goal >= 0.0 else -1.0
 
         requested_speed = abs(goal.speed)
-        max_speed = requested_speed if requested_speed > 0.0 else 0.09
-        min_speed = min(max(max_speed * 0.2, 0.02), max_speed)
+        max_speed = requested_speed if requested_speed > 0.0 else _MOVE_DEFAULT_MAX_SPEED
+        min_speed = min(
+            max(max_speed * _MOVE_MIN_SPEED_FRAC_OF_MAX, _MOVE_MIN_SPEED_FLOOR),
+            max_speed,
+        )
 
         context = _MoveGoalContext(
             goal_handle,
@@ -242,6 +251,7 @@ class MoveServer(Node):
             context.total_distance,
             context.max_speed,
             min_speed=context.min_speed,
+            ramp_fraction=_MOVE_TRAPEZOID_RAMP_FRACTION,
         )
         cmd = Twist()
         cmd.linear.x = context.direction * speed

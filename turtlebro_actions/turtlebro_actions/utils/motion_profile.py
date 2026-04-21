@@ -63,3 +63,20 @@ def normalize_angle(angle: float) -> float:
     else:
         angle = 0.0
     return angle
+
+
+def rotation_progress_from_start_rad(
+    start_yaw: float,
+    current_yaw: float,
+    direction: float,
+    total_angle_rad: float,
+    prev_progress_rad: float,
+) -> float:
+    """Прогресс (рад) для целей < π: разность yaw от старта, с монотонностью по ``prev``."""
+    total_angle_rad = max(total_angle_rad, 0.0)
+    rel = normalize_angle(current_yaw - start_yaw)
+    signed = rel * direction
+    if signed < 0.0 and total_angle_rad >= math.pi - 1e-9:
+        signed += 2.0 * math.pi
+    candidate = max(0.0, signed)
+    return max(candidate, max(0.0, prev_progress_rad))
