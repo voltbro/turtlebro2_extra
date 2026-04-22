@@ -26,6 +26,8 @@ MODULES = [
     "turtlebro_actions",
     "turtlebro_actions.servers",
     "turtlebro_actions.utils.linear_pid_controller",
+    "turtlebro_actions.utils.odom_helpers",
+    "turtlebro_actions.utils.motion_profile",
     "turtlebro_actions.examples",
     "turtlebro_actions.examples.move_client",
     "turtlebro_actions.examples.text_to_speech_client",

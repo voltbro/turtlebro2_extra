@@ -19,6 +19,11 @@ from launch_ros.actions import Node
 def generate_launch_description() -> LaunchDescription:
     return LaunchDescription(
         [
+            # Для прямолинейного перемещения доступны два Action-сервера на одном
+            # действии `action_move`: выбрать нужно ровно один.
+            #   * move_server          — базовый, без коррекции курса.
+            #   * move_linear_server   — со стабилизацией yaw по /odom через PID.
+            # По умолчанию активен move_linear_server, move_server закомментирован.
             # Node(
             #     package='turtlebro_actions',
             #     executable='move_server.py',

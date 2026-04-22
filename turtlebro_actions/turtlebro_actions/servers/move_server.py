@@ -22,7 +22,6 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.action.server import ActionServer, CancelResponse, GoalResponse
-
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
@@ -30,12 +29,16 @@ from rclpy.node import Node
 from turtlebro_interfaces.action import Move
 
 from turtlebro_actions.utils.motion_profile import compute_trapezoidal_speed
+from turtlebro_actions.utils.odom_helpers import distance_xy
 
 # Трапециевидный профиль линейной скорости и min_speed при перемещении (м/с)
 _MOVE_DEFAULT_MAX_SPEED = 0.09
 _MOVE_MIN_SPEED_FRAC_OF_MAX = 0.2
 _MOVE_MIN_SPEED_FLOOR = 0.02
-_MOVE_TRAPEZOID_RAMP_FRACTION = 0.25
+_MOVE_DEFAULT_RAMP_TIME_SEC = 2.0
+
+_CONTROL_RATE_HZ = 40.0
+_CONTROL_DT = 1.0 / _CONTROL_RATE_HZ
 
 
 class _MoveGoalContext:
@@ -50,6 +53,7 @@ class _MoveGoalContext:
         start_y: float,
         max_speed: float,
         min_speed: float,
+        ramp_time_sec: float,
     ) -> None:
         self.goal_handle = goal_handle
         self.total_distance = total_distance
@@ -58,16 +62,20 @@ class _MoveGoalContext:
         self.start_y = start_y
         self.max_speed = max_speed
         self.min_speed = min_speed
-        self.result = None
+        self.ramp_time_sec = ramp_time_sec
+        self.result: Move.Result | None = None
         self.done_event = threading.Event()
 
 
 class MoveServer(Node):
-    """Action-сервер, который перемещает робота вперед или назад."""
+    """Action-сервер, который перемещает робота вперед или назад (без коррекции курса)."""
 
     def __init__(self) -> None:
         super().__init__('move_server_node')
         self._callback_group = ReentrantCallbackGroup()
+
+        self.declare_parameter('odom_topic', '/odom')
+        self.declare_parameter('ramp_time_sec', _MOVE_DEFAULT_RAMP_TIME_SEC)
 
         self.odom = Odometry()
         self._odom_received = False
@@ -77,6 +85,9 @@ class MoveServer(Node):
         self._active_goal_lock = threading.Lock()
         self._active_goal: _MoveGoalContext | None = None
 
+        # Ресурсы ленивые: создаются после первой цели, таймер работает только
+        # пока цель активна (reset в execute, cancel в _complete_goal).
+        self._resources_lock = threading.Lock()
         self.cmd_vel = None
         self._odom_subscription = None
         self._control_timer = None
@@ -94,22 +105,28 @@ class MoveServer(Node):
         self.get_logger().info('Запущен Action-сервер перемещения')
 
     def _ensure_resources(self) -> None:
-        if self._resources_ready:
-            return
-        self.cmd_vel = self.create_publisher(Twist, '/cmd_vel', 10)
-        self._odom_subscription = self.create_subscription(
-            Odometry,
-            '/odom',
-            self.subscriber_odometry_cb,
-            10,
-            callback_group=self._callback_group,
-        )
-        self._control_timer = self.create_timer(
-            1.0 / 40.0,
-            self._control_step,
-            callback_group=self._callback_group,
-        )
-        self._resources_ready = True
+        with self._resources_lock:
+            if self._resources_ready:
+                return
+            odom_topic = str(self.get_parameter('odom_topic').get_parameter_value().string_value)
+            self.cmd_vel = self.create_publisher(Twist, '/cmd_vel', 10)
+            self._odom_subscription = self.create_subscription(
+                Odometry,
+                odom_topic,
+                self.subscriber_odometry_cb,
+                10,
+                callback_group=self._callback_group,
+            )
+            self._control_timer = self.create_timer(
+                _CONTROL_DT,
+                self._control_step,
+                callback_group=self._callback_group,
+            )
+            self._control_timer.cancel()
+            self._resources_ready = True
+            self.get_logger().info(
+                f'Ресурсы созданы: подписка на {odom_topic}, публикация /cmd_vel'
+            )
 
     def subscriber_odometry_cb(self, msg: Odometry) -> None:
         self.odom = msg
@@ -136,7 +153,7 @@ class MoveServer(Node):
             return CancelResponse.REJECT
 
         self.get_logger().info('Получен запрос на отмену перемещения')
-        if active_goal is not None:
+        if active_goal is not None and self.cmd_vel is not None:
             self.cmd_vel.publish(Twist())
         return CancelResponse.ACCEPT
 
@@ -146,16 +163,12 @@ class MoveServer(Node):
         total_distance = float(abs(goal.goal))
         if math.isclose(total_distance, 0.0, abs_tol=1e-4):
             goal_handle.succeed()
-            result = Move.Result()
-            result.result = 0.0
-            return result
+            return self._build_result(0.0)
 
         if not self._wait_for_odom(timeout=2.0):
             self.get_logger().error('Одометрия недоступна, отменяю цель перемещения')
             goal_handle.abort()
-            result = Move.Result()
-            result.result = 0.0
-            return result
+            return self._build_result(0.0)
 
         start_pose_x = float(self.odom.pose.pose.position.x)
         start_pose_y = float(self.odom.pose.pose.position.y)
@@ -168,6 +181,10 @@ class MoveServer(Node):
             max_speed,
         )
 
+        ramp_time_sec = float(
+            self.get_parameter('ramp_time_sec').get_parameter_value().double_value
+        )
+
         context = _MoveGoalContext(
             goal_handle,
             total_distance,
@@ -176,12 +193,14 @@ class MoveServer(Node):
             start_pose_y,
             max_speed,
             min_speed,
+            ramp_time_sec,
         )
 
         with self._active_goal_lock:
             self._active_goal = context
 
         self.get_logger().info('Выполняю цель перемещения')
+        self._control_timer.reset()
 
         while rclpy.ok():
             if context.done_event.wait(timeout=0.1):
@@ -193,7 +212,7 @@ class MoveServer(Node):
                 goal_handle.abort()
             except Exception:  # noqa: BLE001
                 pass
-            return self._build_result(0.0, direction)
+            return self._build_result(0.0)
 
         return context.result
 
@@ -212,26 +231,26 @@ class MoveServer(Node):
 
         if goal_handle.is_cancel_requested:
             self.get_logger().info('Цель перемещения отменена')
-            distance_travelled = self._compute_distance(
-                context.start_x, context.start_y, self.odom.pose.pose.position
+            distance_travelled = min(
+                distance_xy(context.start_x, context.start_y, self.odom.pose.pose.position),
+                context.total_distance,
             )
-            distance_travelled = min(distance_travelled, context.total_distance)
             self._complete_goal(
                 context,
                 status='cancel',
-                result=self._build_result(distance_travelled, context.direction),
+                result=self._build_result(context.direction * distance_travelled),
             )
             return
 
         if self._odom_stale_seconds() > 5.0:
             self.get_logger().warning('Одометрия не обновляется >5с, отменяю цель перемещения')
-            self._complete_goal(context, status='abort', result=self._build_result(0.0, context.direction))
+            self._complete_goal(context, status='abort', result=self._build_result(0.0))
             return
 
-        distance_passed = self._compute_distance(
-            context.start_x, context.start_y, self.odom.pose.pose.position
+        distance_passed = min(
+            distance_xy(context.start_x, context.start_y, self.odom.pose.pose.position),
+            context.total_distance,
         )
-        distance_passed = min(distance_passed, context.total_distance)
 
         feedback = Move.Feedback()
         feedback.feedback = float(context.direction * distance_passed)
@@ -242,7 +261,7 @@ class MoveServer(Node):
             self._complete_goal(
                 context,
                 status='success',
-                result=self._build_result(distance_passed, context.direction),
+                result=self._build_result(context.direction * distance_passed),
             )
             return
 
@@ -251,7 +270,7 @@ class MoveServer(Node):
             context.total_distance,
             context.max_speed,
             min_speed=context.min_speed,
-            ramp_fraction=_MOVE_TRAPEZOID_RAMP_FRACTION,
+            ramp_time_sec=context.ramp_time_sec,
         )
         cmd = Twist()
         cmd.linear.x = context.direction * speed
@@ -274,22 +293,20 @@ class MoveServer(Node):
         with self._active_goal_lock:
             if self._active_goal is context:
                 self._active_goal = None
+        if self._control_timer is not None:
+            self._control_timer.cancel()
 
     def _safe_publish_stop(self) -> None:
+        if self.cmd_vel is None:
+            return
         try:
-            if self.cmd_vel is not None:
-                self.cmd_vel.publish(Twist())
+            self.cmd_vel.publish(Twist())
         except Exception:  # noqa: BLE001
             pass
 
-    def _compute_distance(self, start_x: float, start_y: float, current_pose) -> float:
-        dx = start_x - float(current_pose.x)
-        dy = start_y - float(current_pose.y)
-        return math.sqrt(dx * dx + dy * dy)
-
-    def _build_result(self, distance: float, direction: float) -> Move.Result:
+    def _build_result(self, signed_distance: float) -> Move.Result:
         result = Move.Result()
-        result.result = float(direction * distance)
+        result.result = float(signed_distance)
         return result
 
     def _odom_stale_seconds(self) -> float:
@@ -317,19 +334,10 @@ def main(args=None) -> None:
         pass
     finally:
         node._safe_publish_stop()
-        try:
-            executor.shutdown()
-        except Exception:
-            pass
-        try:
-            node.destroy_node()
-        except Exception:
-            pass
-        try:
-            if rclpy.ok():
-                rclpy.shutdown()
-        except Exception:
-            pass
+        executor.shutdown()
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

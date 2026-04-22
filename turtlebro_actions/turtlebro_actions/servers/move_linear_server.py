@@ -25,18 +25,18 @@ from rclpy.action.server import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from tf_transformations import euler_from_quaternion
 
 from turtlebro_interfaces.action import Move
 
 from turtlebro_actions.utils.linear_pid_controller import LinearPidController, LinearPidGains
 from turtlebro_actions.utils.motion_profile import compute_trapezoidal_speed, normalize_angle
+from turtlebro_actions.utils.odom_helpers import current_yaw, distance_xy
 
 # Трапециевидный профиль линейной скорости и min_speed при перемещении (м/с)
 _MOVE_DEFAULT_MAX_SPEED = 0.09
 _MOVE_MIN_SPEED_FRAC_OF_MAX = 0.2
 _MOVE_MIN_SPEED_FLOOR = 0.02
-_MOVE_TRAPEZOID_RAMP_FRACTION = 0.25
+_MOVE_DEFAULT_RAMP_TIME_SEC = 2.0
 
 _CONTROL_RATE_HZ = 40.0
 _CONTROL_DT = 1.0 / _CONTROL_RATE_HZ
@@ -55,6 +55,7 @@ class _MoveLinearGoalContext:
         yaw_ref: float,
         max_speed: float,
         min_speed: float,
+        ramp_time_sec: float,
         linear_pid: LinearPidController,
     ) -> None:
         self.goal_handle = goal_handle
@@ -65,8 +66,9 @@ class _MoveLinearGoalContext:
         self.yaw_ref = yaw_ref
         self.max_speed = max_speed
         self.min_speed = min_speed
+        self.ramp_time_sec = ramp_time_sec
         self.linear_pid = linear_pid
-        self.result = None
+        self.result: Move.Result | None = None
         self.done_event = threading.Event()
 
 
@@ -78,6 +80,7 @@ class MoveLinearServer(Node):
         self._callback_group = ReentrantCallbackGroup()
 
         self.declare_parameter('odom_topic', '/odom')
+        self.declare_parameter('ramp_time_sec', _MOVE_DEFAULT_RAMP_TIME_SEC)
         self.declare_parameter('max_angular_z', 0.5)
         # PID по yaw → ω (в YAML: linear_pid.kp: 2.0 и т.д.)
         self.declare_parameter('linear_pid.kp', 5.0)
@@ -93,6 +96,8 @@ class MoveLinearServer(Node):
         self._active_goal_lock = threading.Lock()
         self._active_goal: _MoveLinearGoalContext | None = None
 
+        # Ресурсы ленивые: подписка /odom, publisher /cmd_vel, таймер — после первой цели.
+        self._resources_lock = threading.Lock()
         self.cmd_vel = None
         self._odom_subscription = None
         self._control_timer = None
@@ -110,23 +115,28 @@ class MoveLinearServer(Node):
         self.get_logger().info('Запущен Action-сервер линейного перемещения (коррекция по yaw)')
 
     def _ensure_resources(self) -> None:
-        if self._resources_ready:
-            return
-        odom_topic = str(self.get_parameter('odom_topic').get_parameter_value().string_value)
-        self.cmd_vel = self.create_publisher(Twist, '/cmd_vel', 10)
-        self._odom_subscription = self.create_subscription(
-            Odometry,
-            odom_topic,
-            self.subscriber_odometry_cb,
-            10,
-            callback_group=self._callback_group,
-        )
-        self._control_timer = self.create_timer(
-            1.0 / _CONTROL_RATE_HZ,
-            self._control_step,
-            callback_group=self._callback_group,
-        )
-        self._resources_ready = True
+        with self._resources_lock:
+            if self._resources_ready:
+                return
+            odom_topic = str(self.get_parameter('odom_topic').get_parameter_value().string_value)
+            self.cmd_vel = self.create_publisher(Twist, '/cmd_vel', 10)
+            self._odom_subscription = self.create_subscription(
+                Odometry,
+                odom_topic,
+                self.subscriber_odometry_cb,
+                10,
+                callback_group=self._callback_group,
+            )
+            self._control_timer = self.create_timer(
+                _CONTROL_DT,
+                self._control_step,
+                callback_group=self._callback_group,
+            )
+            self._control_timer.cancel()
+            self._resources_ready = True
+            self.get_logger().info(
+                f'Ресурсы созданы: подписка на {odom_topic}, публикация /cmd_vel'
+            )
 
     def subscriber_odometry_cb(self, msg: Odometry) -> None:
         self.odom = msg
@@ -153,7 +163,7 @@ class MoveLinearServer(Node):
             return CancelResponse.REJECT
 
         self.get_logger().info('Получен запрос на отмену перемещения')
-        if active_goal is not None:
+        if active_goal is not None and self.cmd_vel is not None:
             self.cmd_vel.publish(Twist())
         return CancelResponse.ACCEPT
 
@@ -163,20 +173,16 @@ class MoveLinearServer(Node):
         total_distance = float(abs(goal.goal))
         if math.isclose(total_distance, 0.0, abs_tol=1e-4):
             goal_handle.succeed()
-            result = Move.Result()
-            result.result = 0.0
-            return result
+            return self._build_result(0.0)
 
         if not self._wait_for_odom(timeout=2.0):
             self.get_logger().error('Одометрия недоступна, отменяю цель перемещения')
             goal_handle.abort()
-            result = Move.Result()
-            result.result = 0.0
-            return result
+            return self._build_result(0.0)
 
         start_pose_x = float(self.odom.pose.pose.position.x)
         start_pose_y = float(self.odom.pose.pose.position.y)
-        yaw_ref = self._current_yaw()
+        yaw_ref = current_yaw(self.odom)
         direction = 1.0 if goal.goal >= 0.0 else -1.0
 
         requested_speed = abs(goal.speed)
@@ -187,8 +193,10 @@ class MoveLinearServer(Node):
         )
 
         max_angular_z = float(self.get_parameter('max_angular_z').get_parameter_value().double_value)
-        gains = self._read_linear_pid_gains()
-        linear_pid = LinearPidController(gains, output_limit=max_angular_z)
+        ramp_time_sec = float(
+            self.get_parameter('ramp_time_sec').get_parameter_value().double_value
+        )
+        linear_pid = LinearPidController(self._read_linear_pid_gains(), output_limit=max_angular_z)
 
         context = _MoveLinearGoalContext(
             goal_handle,
@@ -199,6 +207,7 @@ class MoveLinearServer(Node):
             yaw_ref,
             max_speed,
             min_speed,
+            ramp_time_sec,
             linear_pid,
         )
 
@@ -206,6 +215,7 @@ class MoveLinearServer(Node):
             self._active_goal = context
 
         self.get_logger().info('Выполняю цель линейного перемещения')
+        self._control_timer.reset()
 
         while rclpy.ok():
             if context.done_event.wait(timeout=0.1):
@@ -217,7 +227,7 @@ class MoveLinearServer(Node):
                 goal_handle.abort()
             except Exception:  # noqa: BLE001
                 pass
-            return self._build_result(0.0, direction)
+            return self._build_result(0.0)
 
         return context.result
 
@@ -232,12 +242,12 @@ class MoveLinearServer(Node):
         )
 
     def _linear_correction(self, context: _MoveLinearGoalContext) -> tuple[float, float]:
-        """Возвращает (ω_z от PID, ошибка слежения yaw в рад).
+        """Возвращает (ω_z от PID, ошибку слежения yaw в рад).
 
-        Ошибка e = normalize_angle(yaw_ref − yaw): положительная — нужен поворот против часовой
-        (положительный Twist.angular.z по REP-103), чтобы выровнять курс.
+        e = normalize_angle(yaw_ref − yaw): положительная — нужен поворот против часовой
+        (положительный Twist.angular.z по REP-103).
         """
-        e = normalize_angle(context.yaw_ref - self._current_yaw())
+        e = normalize_angle(context.yaw_ref - current_yaw(self.odom))
         omega = context.linear_pid.step(e, _CONTROL_DT)
         return omega, e
 
@@ -256,26 +266,26 @@ class MoveLinearServer(Node):
 
         if goal_handle.is_cancel_requested:
             self.get_logger().info('Цель перемещения отменена')
-            distance_travelled = self._compute_distance(
-                context.start_x, context.start_y, self.odom.pose.pose.position
+            distance_travelled = min(
+                distance_xy(context.start_x, context.start_y, self.odom.pose.pose.position),
+                context.total_distance,
             )
-            distance_travelled = min(distance_travelled, context.total_distance)
             self._complete_goal(
                 context,
                 status='cancel',
-                result=self._build_result(distance_travelled, context.direction),
+                result=self._build_result(context.direction * distance_travelled),
             )
             return
 
         if self._odom_stale_seconds() > 5.0:
             self.get_logger().warning('Одометрия не обновляется >5с, отменяю цель перемещения')
-            self._complete_goal(context, status='abort', result=self._build_result(0.0, context.direction))
+            self._complete_goal(context, status='abort', result=self._build_result(0.0))
             return
 
-        distance_passed = self._compute_distance(
-            context.start_x, context.start_y, self.odom.pose.pose.position
+        distance_passed = min(
+            distance_xy(context.start_x, context.start_y, self.odom.pose.pose.position),
+            context.total_distance,
         )
-        distance_passed = min(distance_passed, context.total_distance)
 
         feedback = Move.Feedback()
         feedback.feedback = float(context.direction * distance_passed)
@@ -286,7 +296,7 @@ class MoveLinearServer(Node):
             self._complete_goal(
                 context,
                 status='success',
-                result=self._build_result(distance_passed, context.direction),
+                result=self._build_result(context.direction * distance_passed),
             )
             return
 
@@ -295,11 +305,12 @@ class MoveLinearServer(Node):
             context.total_distance,
             context.max_speed,
             min_speed=context.min_speed,
-            ramp_fraction=_MOVE_TRAPEZOID_RAMP_FRACTION,
+            ramp_time_sec=context.ramp_time_sec,
         )
+        omega_z, yaw_err = self._linear_correction(context)
+
         cmd = Twist()
         cmd.linear.x = context.direction * speed
-        omega_z, yaw_err = self._linear_correction(context)
         cmd.angular.z = omega_z
         self.cmd_vel.publish(cmd)
         self.get_logger().info(
@@ -325,34 +336,20 @@ class MoveLinearServer(Node):
         with self._active_goal_lock:
             if self._active_goal is context:
                 self._active_goal = None
+        if self._control_timer is not None:
+            self._control_timer.cancel()
 
     def _safe_publish_stop(self) -> None:
+        if self.cmd_vel is None:
+            return
         try:
-            if self.cmd_vel is not None:
-                self.cmd_vel.publish(Twist())
+            self.cmd_vel.publish(Twist())
         except Exception:  # noqa: BLE001
             pass
 
-    def _current_yaw(self) -> float:
-        orientation = self.odom.pose.pose.orientation
-        _, _, yaw = euler_from_quaternion(
-            [
-                orientation.x,
-                orientation.y,
-                orientation.z,
-                orientation.w,
-            ]
-        )
-        return yaw
-
-    def _compute_distance(self, start_x: float, start_y: float, current_pose) -> float:
-        dx = start_x - float(current_pose.x)
-        dy = start_y - float(current_pose.y)
-        return math.sqrt(dx * dx + dy * dy)
-
-    def _build_result(self, distance: float, direction: float) -> Move.Result:
+    def _build_result(self, signed_distance: float) -> Move.Result:
         result = Move.Result()
-        result.result = float(direction * distance)
+        result.result = float(signed_distance)
         return result
 
     def _odom_stale_seconds(self) -> float:
@@ -364,9 +361,13 @@ class MoveLinearServer(Node):
         if self._odom_stale_seconds() <= 1.0:
             return True
         self._odom_event.clear()
-        if self._odom_event.wait(timeout=timeout):
-            return self._odom_received
-        return False
+        if not self._odom_event.wait(timeout=timeout):
+            if not self._odom_received:
+                self.get_logger().info(
+                    'После lazy-подписки первое сообщение /odom не пришло за %.1f с' % timeout
+                )
+            return False
+        return self._odom_received
 
 
 def main(args=None) -> None:
@@ -380,19 +381,10 @@ def main(args=None) -> None:
         pass
     finally:
         node._safe_publish_stop()
-        try:
-            executor.shutdown()
-        except Exception:
-            pass
-        try:
-            node.destroy_node()
-        except Exception:
-            pass
-        try:
-            if rclpy.ok():
-                rclpy.shutdown()
-        except Exception:
-            pass
+        executor.shutdown()
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

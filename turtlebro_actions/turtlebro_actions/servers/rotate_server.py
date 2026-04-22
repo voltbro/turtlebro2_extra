@@ -25,7 +25,6 @@ from rclpy.action.server import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from tf_transformations import euler_from_quaternion
 
 from turtlebro_interfaces.action import Rotation
 
@@ -34,12 +33,16 @@ from turtlebro_actions.utils.motion_profile import (
     normalize_angle,
     rotation_progress_from_start_rad,
 )
+from turtlebro_actions.utils.odom_helpers import current_yaw as odom_current_yaw
 
 # Трапециевидный профиль угловой скорости и нижняя скорость (рад/с), если в цели speed=0
 _ROTATE_DEFAULT_MAX_SPEED = 0.9
 _ROTATE_MIN_SPEED_FRAC_OF_MAX = 0.1
 _ROTATE_MIN_SPEED_FLOOR = 0.03
-_ROTATE_TRAPEZOID_RAMP_FRACTION = 0.4
+_ROTATE_DEFAULT_RAMP_TIME_SEC = 2.0
+
+_CONTROL_RATE_HZ = 40.0
+_CONTROL_DT = 1.0 / _CONTROL_RATE_HZ
 
 
 class _RotationGoalContext:
@@ -52,6 +55,7 @@ class _RotationGoalContext:
         direction: float,
         max_speed: float,
         min_speed: float,
+        ramp_time_sec: float,
         start_yaw: float,
         prev_yaw: float,
         use_absolute_progress: bool,
@@ -61,11 +65,12 @@ class _RotationGoalContext:
         self.direction = direction
         self.max_speed = max_speed
         self.min_speed = min_speed
+        self.ramp_time_sec = ramp_time_sec
         self.start_yaw = start_yaw
         self.prev_yaw = prev_yaw
         self.use_absolute_progress = use_absolute_progress
         self.accumulated_radians = 0.0
-        self.result = None
+        self.result: Rotation.Result | None = None
         self.done_event = threading.Event()
 
 
@@ -76,19 +81,25 @@ class RotateServer(Node):
         super().__init__('rotate_server_node')
         self._callback_group = ReentrantCallbackGroup()
 
+        self.declare_parameter('odom_topic', '/odom')
+        self.declare_parameter('ramp_time_sec', _ROTATE_DEFAULT_RAMP_TIME_SEC)
+
         self.odom = Odometry()
-        self.cmd_vel = None
-        self._odom_subscription = None
-        self._resources_ready = False
         self._odom_received = False
         self._odom_event = threading.Event()
-        self._control_period_seconds = 1.0 / 40.0
         self._odom_period_seconds = 0.1
         self._last_odom_time = time.monotonic()
 
         self._active_goal_lock = threading.Lock()
         self._active_goal: _RotationGoalContext | None = None
+
+        # Ресурсы ленивые: создаются после первой цели, таймер работает только
+        # пока цель активна (reset в execute, cancel в _complete_goal).
+        self._resources_lock = threading.Lock()
+        self.cmd_vel = None
+        self._odom_subscription = None
         self._control_timer = None
+        self._resources_ready = False
 
         self._action_server = ActionServer(
             self,
@@ -102,22 +113,28 @@ class RotateServer(Node):
         self.get_logger().info('Запущен Action-сервер поворота')
 
     def _ensure_resources(self) -> None:
-        if self._resources_ready:
-            return
-        self.cmd_vel = self.create_publisher(Twist, '/cmd_vel', 10)
-        self._odom_subscription = self.create_subscription(
-            Odometry,
-            '/odom',
-            self.subscriber_odometry_cb,
-            10,
-            callback_group=self._callback_group,
-        )
-        self._control_timer = self.create_timer(
-            1.0 / 40.0,
-            self._control_step,
-            callback_group=self._callback_group,
-        )
-        self._resources_ready = True
+        with self._resources_lock:
+            if self._resources_ready:
+                return
+            odom_topic = str(self.get_parameter('odom_topic').get_parameter_value().string_value)
+            self.cmd_vel = self.create_publisher(Twist, '/cmd_vel', 10)
+            self._odom_subscription = self.create_subscription(
+                Odometry,
+                odom_topic,
+                self.subscriber_odometry_cb,
+                10,
+                callback_group=self._callback_group,
+            )
+            self._control_timer = self.create_timer(
+                _CONTROL_DT,
+                self._control_step,
+                callback_group=self._callback_group,
+            )
+            self._control_timer.cancel()
+            self._resources_ready = True
+            self.get_logger().info(
+                f'Ресурсы созданы: подписка на {odom_topic}, публикация /cmd_vel'
+            )
 
     def subscriber_odometry_cb(self, msg: Odometry) -> None:
         self.odom = msg
@@ -147,7 +164,7 @@ class RotateServer(Node):
             return CancelResponse.REJECT
 
         self.get_logger().info('Получен запрос на отмену поворота')
-        if active_goal is not None:
+        if active_goal is not None and self.cmd_vel is not None:
             self.cmd_vel.publish(Twist())
         return CancelResponse.ACCEPT
 
@@ -155,13 +172,13 @@ class RotateServer(Node):
         self._ensure_resources()
         goal = goal_handle.request
         total_angle_deg = abs(goal.goal)
+        if total_angle_deg == 0:
+            goal_handle.succeed()
+            return self._build_result(0.0)
+
         if not self._wait_for_odom(timeout=2.0):
             self.get_logger().error('Одометрия недоступна, отменяю цель поворота')
             goal_handle.abort()
-            return self._build_result(0.0)
-
-        if total_angle_deg == 0:
-            goal_handle.succeed()
             return self._build_result(0.0)
 
         total_angle_rad = math.radians(total_angle_deg)
@@ -172,7 +189,11 @@ class RotateServer(Node):
             max_speed,
         )
 
-        yaw0 = self._current_yaw()
+        ramp_time_sec = float(
+            self.get_parameter('ramp_time_sec').get_parameter_value().double_value
+        )
+
+        yaw0 = odom_current_yaw(self.odom)
         use_absolute = total_angle_rad <= math.pi + 1e-9
         context = _RotationGoalContext(
             goal_handle,
@@ -180,6 +201,7 @@ class RotateServer(Node):
             direction,
             max_speed,
             min_speed,
+            ramp_time_sec,
             start_yaw=yaw0,
             prev_yaw=yaw0,
             use_absolute_progress=use_absolute,
@@ -189,6 +211,7 @@ class RotateServer(Node):
             self._active_goal = context
 
         self.get_logger().info('Выполняю цель поворота')
+        self._control_timer.reset()
 
         while rclpy.ok():
             if context.done_event.wait(timeout=0.1):
@@ -230,18 +253,18 @@ class RotateServer(Node):
             self._complete_goal(context, status='abort', result=self._build_result(0.0))
             return
 
-        current_yaw = self._current_yaw()
+        yaw_now = odom_current_yaw(self.odom)
         if context.use_absolute_progress:
             context.accumulated_radians = rotation_progress_from_start_rad(
                 context.start_yaw,
-                current_yaw,
+                yaw_now,
                 context.direction,
                 context.total_angle_rad,
                 context.accumulated_radians,
             )
         else:
-            delta = normalize_angle(current_yaw - context.prev_yaw)
-            context.prev_yaw = current_yaw
+            delta = normalize_angle(yaw_now - context.prev_yaw)
+            context.prev_yaw = yaw_now
             context.accumulated_radians += delta * context.direction
             context.accumulated_radians = max(context.accumulated_radians, 0.0)
 
@@ -262,7 +285,7 @@ class RotateServer(Node):
             context.total_angle_rad,
             context.max_speed,
             min_speed=context.min_speed,
-            ramp_fraction=_ROTATE_TRAPEZOID_RAMP_FRACTION,
+            ramp_time_sec=context.ramp_time_sec,
         )
         remaining_angle_rad = max(context.total_angle_rad - context.accumulated_radians, 0.0)
         speed = min(speed, self._max_speed_for_remaining_angle(remaining_angle_rad))
@@ -289,25 +312,16 @@ class RotateServer(Node):
         with self._active_goal_lock:
             if self._active_goal is context:
                 self._active_goal = None
+        if self._control_timer is not None:
+            self._control_timer.cancel()
 
     def _safe_publish_stop(self) -> None:
+        if self.cmd_vel is None:
+            return
         try:
-            if self.cmd_vel is not None:
-                self.cmd_vel.publish(Twist())
+            self.cmd_vel.publish(Twist())
         except Exception:  # noqa: BLE001
             pass
-
-    def _current_yaw(self) -> float:
-        orientation = self.odom.pose.pose.orientation
-        _, _, yaw = euler_from_quaternion(
-            [
-                orientation.x,
-                orientation.y,
-                orientation.z,
-                orientation.w,
-            ]
-        )
-        return yaw
 
     def _build_result(self, radians_complete: float) -> Rotation.Result:
         result = Rotation.Result()
@@ -330,8 +344,7 @@ class RotateServer(Node):
     def _max_speed_for_remaining_angle(self, remaining_angle_rad: float) -> float:
         if remaining_angle_rad <= 0.0:
             return 0.0
-        control_period = max(getattr(self, '_control_period_seconds', 1.0 / 40.0), 0.001)
-        odom_period = max(getattr(self, '_odom_period_seconds', control_period), control_period)
+        odom_period = max(self._odom_period_seconds, _CONTROL_DT)
         return remaining_angle_rad / odom_period
 
 
@@ -346,19 +359,10 @@ def main(args=None) -> None:
         pass
     finally:
         node._safe_publish_stop()
-        try:
-            executor.shutdown()
-        except Exception:
-            pass
-        try:
-            node.destroy_node()
-        except Exception:
-            pass
-        try:
-            if rclpy.ok():
-                rclpy.shutdown()
-        except Exception:
-            pass
+        executor.shutdown()
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

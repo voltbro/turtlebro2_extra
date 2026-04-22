@@ -23,9 +23,19 @@ def compute_trapezoidal_speed(
     max_speed: float,
     *,
     min_speed: float,
-    ramp_fraction: float = 0.25,
+    ramp_time_sec: float = 2.0,
 ) -> float:
-    """Возвращает скорость для трапецеидального профиля по пройденному пути."""
+    """Возвращает скорость для трапецеидального профиля по пройденному пути.
+
+    Длина участка разгона/торможения рассчитывается из желаемого времени
+    ``ramp_time_sec`` по формуле ``0.5 * (v_min + v_max) * T_ramp`` (точная для
+    distance-linear профиля со средней скоростью ``(v_min+v_max)/2``).
+
+    Если общий путь короче, чем сумма полноценного разгона и торможения
+    (``total_distance < (v_min + v_max) * T_ramp``), срабатывает клэмп
+    ``ramp_distance <= total_distance / 2`` и профиль становится треугольным:
+    робот не успевает выйти на ``max_speed``.
+    """
     total_distance = max(total_distance, 0.0)
     if total_distance == 0.0:
         return 0.0
@@ -35,8 +45,8 @@ def compute_trapezoidal_speed(
     if max_speed == 0.0:
         return 0.0
 
-    ramp_fraction = min(max(ramp_fraction, 0.05), 0.45)
-    ramp_distance = max(total_distance * ramp_fraction, 0.01)
+    ramp_time_sec = max(ramp_time_sec, 0.0)
+    ramp_distance = max(0.5 * (min_speed + max_speed) * ramp_time_sec, 0.01)
     ramp_distance = min(ramp_distance, total_distance / 2.0)
 
     distance_passed = max(min(distance_passed, total_distance), 0.0)
