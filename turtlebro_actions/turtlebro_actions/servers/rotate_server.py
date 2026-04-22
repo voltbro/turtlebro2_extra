@@ -14,6 +14,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+"""Action-сервер поворота робота вокруг оси Z.
+
+ROS-параметры:
+    odom_topic (string, default='/odom')
+        Топик одометрии для отслеживания прогресса поворота по yaw.
+    ramp_time_sec (double, default=2.0)
+        Целевое время разгона/торможения в секундах для трапециевидного профиля
+        угловой скорости. Длина разгонного участка (в радианах) равна
+        ``0.5 * (ω_min + ω_max) * ramp_time_sec``. Если цель короче
+        ``(ω_min + ω_max) * ramp_time_sec``, профиль треугольный и ``ω_max`` не
+        достигается.
+"""
 import math
 import threading
 import time

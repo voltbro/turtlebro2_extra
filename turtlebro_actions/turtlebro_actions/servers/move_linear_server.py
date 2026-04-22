@@ -14,6 +14,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+"""Action-сервер прямолинейного перемещения с коррекцией yaw по /odom.
+
+Поверх `move_server` добавляет дискретный PID-контур «ошибка yaw → ω_z»,
+который удерживает курс, заданный orientation в момент старта цели.
+
+ROS-параметры:
+    odom_topic (string, default='/odom')
+        Топик одометрии — источник позиции и orientation.
+    ramp_time_sec (double, default=2.0)
+        Целевое время разгона/торможения линейного профиля, см. описание в
+        `move_server`.
+    max_angular_z (double, default=0.5)
+        Верхний клэмп |ω_z| на выходе PID в рад/с.
+    linear_pid.kp (double, default=5.0)
+    linear_pid.ki (double, default=1.5)
+    linear_pid.kd (double, default=0.0)
+        Коэффициенты PID для контура коррекции yaw.
+    linear_pid.integral_limit (double, default=0.0)
+        Насыщение интегрального накопителя в рад·с. 0.0 отключает anti-windup
+        клэмп.
+
+Значения параметров фиксируются в момент старта цели (execute_callback) и не
+меняются до её завершения.
+"""
 import math
 import threading
 import time

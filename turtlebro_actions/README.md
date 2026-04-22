@@ -18,7 +18,23 @@ source install/setup.bash
 ros2 launch turtlebro_actions action_servers.launch.py
 ```
 
-Лаунч поднимает серверы движения (`MoveServer`) и поворота (`RotateServer`), сервис фотографирования (`PhotoService`), сервисы записи и воспроизведения звука (`RecordAudioService`, `PlayAudioService`), а также Action-сервер синтеза речи (`TextToSpeechServer`) c использованием RHVoice через speech-dispatcher.
+Лаунч поднимает серверы движения (`MoveServer` либо `MoveLinearServer` — см. ниже) и поворота (`RotateServer`), сервис фотографирования (`PhotoService`), сервисы записи и воспроизведения звука (`RecordAudioService`, `PlayAudioService`), а также Action-сервер синтеза речи (`TextToSpeechServer`) c использованием RHVoice через speech-dispatcher.
+
+Все ROS-параметры, которые можно переопределить для каждого узла, объявлены в [`launch/action_servers.launch.py`](launch/action_servers.launch.py) с комментариями. Менять значения можно прямо там, либо через CLI:
+
+```
+ros2 run turtlebro_actions rotate_server.py --ros-args -p ramp_time_sec:=1.0
+ros2 param set /move_linear_server linear_pid.kp 3.0
+```
+
+## Прямолинейное движение (`action_move`)
+
+На одном действии `action_move` доступны **два** сервера — активировать нужно **ровно один** (в лаунче оставить соответствующий `Node`):
+
+- `MoveServer` ([`servers/move_server.py`](turtlebro_actions/servers/move_server.py)) — базовый, трапециевидный профиль линейной скорости, без коррекции курса.
+- `MoveLinearServer` ([`servers/move_linear_server.py`](turtlebro_actions/servers/move_linear_server.py)) — тот же профиль плюс PID-контур стабилизации yaw по orientation из одометрии. Удерживает курс, зафиксированный в момент старта цели.
+
+По умолчанию в лаунче включён `MoveLinearServer`.
 
 ## Поворот (`action_rotate`, `RotateServer`)
 
@@ -27,32 +43,106 @@ ros2 launch turtlebro_actions action_servers.launch.py
 
 Практический вывод: для требовательной точности лучше задавать повороты **порциями до 180°**; большие углы разбивать на несколько целей или закладывать больший допуск.
 
-## Константы трапециевидного профиля скорости
+## ROS-параметры серверов движения
 
-Задаются **в начале исходников** серверов (не через `ros2 param`), после правок нужна пересборка пакета. Используются в `compute_trapezoidal_speed` из `turtlebro_actions.utils.motion_profile` (доля пути на разгон и торможение, границы скорости).
+Значения по умолчанию и подробные комментарии см. в [`launch/action_servers.launch.py`](launch/action_servers.launch.py). Таблица ниже — сводка.
 
-### Поворот — [`turtlebro_actions/turtlebro_actions/servers/rotate_server.py`](turtlebro_actions/turtlebro_actions/servers/rotate_server.py)
+### `MoveServer` и `MoveLinearServer`
+
+| Параметр | Тип | По умолчанию | Смысл |
+|---|---|---|---|
+| `odom_topic` | string | `/odom` | Топик одометрии для отслеживания позиции и yaw. |
+| `ramp_time_sec` | double | `2.0` | Целевое время разгона и время торможения в секундах. См. раздел «Трапециевидный профиль скорости» ниже. |
+
+Дополнительно у `MoveLinearServer`:
+
+| Параметр | Тип | По умолчанию | Смысл |
+|---|---|---|---|
+| `max_angular_z` | double | `0.5` | Верхний клэмп `|ω_z|` на выходе PID, рад/с. |
+| `linear_pid.kp` | double | `5.0` | Пропорциональная составляющая контура «ошибка yaw → ω_z». |
+| `linear_pid.ki` | double | `1.5` | Интегральная составляющая. |
+| `linear_pid.kd` | double | `0.0` | Дифференциальная составляющая. |
+| `linear_pid.integral_limit` | double | `0.0` | Насыщение интегрального накопителя (рад·с). `0.0` отключает anti-windup клэмп. |
+
+`ramp_time_sec`, `max_angular_z` и коэффициенты PID считываются **один раз на старте цели** (`execute_callback`) и не меняются до её завершения. Поэтому динамические правки через `ros2 param set` применяются со следующей цели, а не на лету.
+
+### `RotateServer`
+
+| Параметр | Тип | По умолчанию | Смысл |
+|---|---|---|---|
+| `odom_topic` | string | `/odom` | Топик одометрии для отслеживания yaw. |
+| `ramp_time_sec` | double | `2.0` | Целевое время разгона и торможения угловой скорости. |
+
+## Трапециевидный профиль скорости
+
+Профиль реализован в `compute_trapezoidal_speed` из [`turtlebro_actions.utils.motion_profile`](turtlebro_actions/utils/motion_profile.py). Скорость растёт линейно по пройденному пути от `min_speed` до `max_speed`, удерживается на `max_speed`, затем симметрично спадает до `min_speed`.
+
+Длина участка разгона вычисляется из заданного времени `ramp_time_sec` (параметр ноды) по формуле:
+
+```
+ramp_distance = 0.5 * (min_speed + max_speed) * ramp_time_sec
+```
+
+и автоматически ограничивается значением `total_distance / 2`: если общий путь короче суммарного разгона + торможения, профиль становится **треугольным** и робот не выходит на `max_speed`.
+
+`max_speed` берётся из поля `speed` цели Action; если `speed == 0` (или опущено) — используется дефолт, прошитый в исходник соответствующего сервера.
+
+### Константы профиля (в исходниках серверов)
+
+Меняются правкой кода и пересборкой пакета. Используются для расчёта `max_speed` / `min_speed` в каждой цели.
+
+#### [`servers/rotate_server.py`](turtlebro_actions/servers/rotate_server.py)
 
 | Константа | Значение | Смысл |
-|-----------|----------|--------|
+|---|---|---|
 | `_ROTATE_DEFAULT_MAX_SPEED` | `0.9` | Максимальная угловая скорость (рад/с), если в цели `speed == 0`. |
-| `_ROTATE_MIN_SPEED_FRAC_OF_MAX` | `0.1` | Нижняя скорость на фазах разгона/торможения: не меньше этой доли от выбранного `max_speed`. |
-| `_ROTATE_MIN_SPEED_FLOOR` | `0.03` | Нижний предел той же минимальной скорости (рад/с), чтобы на малых `max_speed` не падать ниже разумного порога. |
-| `_ROTATE_TRAPEZOID_RAMP_FRACTION` | `0.4` | Доля полного угла поворота под «крылья» трапеции (разгон и торможение); чем больше, тем раньше начинается снижение скорости к концу. Ограничивается внутри `motion_profile` сверху (см. код). |
+| `_ROTATE_MIN_SPEED_FRAC_OF_MAX` | `0.1` | Минимальная скорость на фазах разгона/торможения: не меньше этой доли от выбранного `max_speed`. |
+| `_ROTATE_MIN_SPEED_FLOOR` | `0.03` | Нижний предел минимальной скорости (рад/с), чтобы на малых `max_speed` не падать ниже разумного порога. |
+| `_ROTATE_DEFAULT_RAMP_TIME_SEC` | `2.0` | Дефолт ROS-параметра `ramp_time_sec`. |
 
-Итоговая минимальная скорость вдоль траектории:  
-`min_speed = min(max(max_speed * _ROTATE_MIN_SPEED_FRAC_OF_MAX, _ROTATE_MIN_SPEED_FLOOR), max_speed)`.
-
-### Перемещение — [`turtlebro_actions/turtlebro_actions/servers/move_server.py`](turtlebro_actions/turtlebro_actions/servers/move_server.py)
+#### [`servers/move_server.py`](turtlebro_actions/servers/move_server.py) и [`servers/move_linear_server.py`](turtlebro_actions/servers/move_linear_server.py)
 
 | Константа | Значение | Смысл |
-|-----------|----------|--------|
-| `_MOVE_DEFAULT_MAX_SPEED` | `0.09` | Линейная скорость (м/с), если в цели `speed == 0` или не задана. |
+|---|---|---|
+| `_MOVE_DEFAULT_MAX_SPEED` | `0.09` | Линейная скорость (м/с), если в цели `speed == 0`. |
 | `_MOVE_MIN_SPEED_FRAC_OF_MAX` | `0.2` | Доля от `max_speed` для минимальной скорости на трапеции. |
 | `_MOVE_MIN_SPEED_FLOOR` | `0.02` | Нижний предел минимальной скорости (м/с). |
-| `_MOVE_TRAPEZOID_RAMP_FRACTION` | `0.25` | Доля пути под разгон и торможение (симметричные «крылья» трапеции). |
+| `_MOVE_DEFAULT_RAMP_TIME_SEC` | `2.0` | Дефолт ROS-параметра `ramp_time_sec`. |
 
-Формула `min_speed` такая же по структуре, как у поворота, с константами `_MOVE_*`.
+Итоговая минимальная скорость вдоль траектории (одинаково для move и rotate, с соответствующими константами):
+
+```
+min_speed = min(max(max_speed * MIN_SPEED_FRAC_OF_MAX, MIN_SPEED_FLOOR), max_speed)
+```
+
+## ROS-параметры сервисов аудио
+
+Значения по умолчанию и комментарии — в том же `launch/action_servers.launch.py`. Сводка:
+
+### `RecordAudioService`
+
+| Параметр | Тип | По умолчанию | Смысл |
+|---|---|---|---|
+| `device` | string | `plughw:0,0` | ALSA-устройство захвата. `request.device` в запросе имеет приоритет, если непустой. |
+| `sample_rate` | int | `48000` | Частота дискретизации, Гц. |
+| `channels` | int | `1` | Число каналов (1 — моно). |
+| `period_size` | int | `1024` | Размер ALSA-периода во фреймах. Баланс задержка/CPU. |
+| `base_path` | string | `/home/pi` | Корневая папка для относительных путей WAV-файлов. |
+| `min_duration` | double | `0.1` | Минимально допустимая длительность запроса, сек. |
+| `capture_volume` | int | `80` | Целевой уровень захвата 0..100. Применяется через `capture_mixer`. |
+| `capture_mixer` | string | `""` | Имя ALSA-миксера. Пусто — автоопределение по устройству. |
+| `digital_gain_db` | double | `0.0` | Дополнительный цифровой гейн после записи, дБ. |
+
+### `PlayAudioService`
+
+| Параметр | Тип | По умолчанию | Смысл |
+|---|---|---|---|
+| `device` | string | `default` | ALSA-устройство воспроизведения. |
+| `period_size` | int | `2048` | Размер ALSA-периода во фреймах. |
+| `base_path` | string | `/home/pi` | Корневая папка для относительных путей WAV-файлов. |
+| `allow_parallel` | bool | `false` | Разрешить одновременное воспроизведение нескольких файлов. По умолчанию второй запрос отклоняется, пока играет первый. |
+
+У `PhotoService` и `TextToSpeechServer` ROS-параметров нет.
 
 ## Синтез речи (RHVoice)
 

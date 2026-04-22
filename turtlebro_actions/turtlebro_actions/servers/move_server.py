@@ -14,6 +14,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+"""Action-сервер прямолинейного перемещения без коррекции курса.
+
+ROS-параметры:
+    odom_topic (string, default='/odom')
+        Топик одометрии для отслеживания пройденного расстояния.
+    ramp_time_sec (double, default=2.0)
+        Целевое время разгона/торможения в секундах для трапециевидного профиля
+        линейной скорости. Длина разгонного участка вычисляется как
+        ``0.5 * (v_min + v_max) * ramp_time_sec``. Если общий путь короче
+        ``(v_min + v_max) * ramp_time_sec``, профиль становится треугольным и
+        робот не выходит на ``max_speed``.
+"""
 import math
 import threading
 import time
